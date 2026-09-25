@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "repositories": [
+    {"directory": "AeroTransformer", "url": "https://github.com/tum-pbs/AeroTransformer.git", "commit": "3dc350ff69e354d1451eae468c686a368bd6151f", "license": "Apache-2.0"},
+    {"directory": "floGen", "url": "https://github.com/YangYunjia/floGen.git", "commit": "ff3abda23e10e1073c07ffd78dad96979e940c77", "license": "MIT"},
+    {"directory": "cfdpost", "url": "https://github.com/YangYunjia/cfdpost.git", "commit": "c9fb313a4f3f3912a2e1a1aaf56e9e7a338bfa5a", "license": "MIT"}
+  ],
+  "model": {"repository": "thuerey-group/AeroTransformer", "revision": "698d70095a00d6f4a25f870e8de0772fc12b68f7", "default": "ATsurf_S", "license": "MIT"},
+  "dataset": {"repository": "thuerey-group/CRMpert", "revision": "88ece28b846fd1d9870933252db556cf97d30ae0", "license": "CC-BY-SA-4.0"}
+}

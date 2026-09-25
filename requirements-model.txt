@@ -1,0 +1,7 @@
+# Torch is installed separately from the official CPU or cu128 index.
+# The exact resolved environment is saved in results/environment.freeze.txt.
+numpy>=1.26,<3
+scipy>=1.11,<2
+matplotlib>=3.8,<4
+einops>=0.8,<0.9
+tqdm>=4.66,<5
