@@ -2,7 +2,15 @@
 
 先独立验证 **FM 能否在足够准确、可校准的前提下替代 CFD**。当前不搭建外层 MDO。
 
-## 最新入口：真实适配 + 独立测试 + 置信度
+## 正式实验前：先按 v1 协议准备
+
+[CFD × Foundation Model 实验协议 v1](docs/EXPERIMENT_PROTOCOL_V1.md) 已约定 Large/微调对照、数据来源、训练参数、置信区间、计时及推进条件。
+配套 [固定清单](configs/protocol_v1_split.json) 按几何划分为 144 Train / 48 Dev / 48 Calibration / 48 Test，训练只用其中 450 个真实 CFD 工况。
+已看过的 77 个机翼全部放入训练范围；旧 pilot 的测试结果作为探索记录。
+
+**这是已冻结的实验计划，完整四分组运行器尚待接入。下方 `run_validation.sh` 仍运行旧 72 样本 pilot，不执行 v1。**
+
+## 已可运行的 72 样本 pilot：真实适配 + 置信度
 
 ```bash
 git clone https://github.com/hongyi-lab/MDO.git
