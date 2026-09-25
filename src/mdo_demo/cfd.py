@@ -200,7 +200,7 @@ def _module_provenance(module: Any) -> dict:
     return {"version": version, "git_revision": revision, "module_file": str(location)}
 
 
-def run_adflow(request: dict, output_dir: Path, *, comm=None) -> dict:
+def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: dict[str, str] | None = None) -> dict:
     """Collective across MPI ranks. Return nonconverged results for diagnostics only."""
     total_start = time.perf_counter()
     import adflow
@@ -217,12 +217,21 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None) -> dict:
     identity = request["identity"]
     cond, ref = identity["condition"], identity["reference"]
     solver = ADFLOW(comm=comm, options=opts)
+    group_functions = []
+    function_groups = {} if function_groups is None else dict(function_groups)
+    for label, family in function_groups.items():
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", label) or not isinstance(family, str) or not family:
+            raise ValueError("function_groups requires simple lowercase labels and explicit family names")
+        for name in ("cl", "cd", "cmx", "cmy", "cmz"):
+            custom_name = f"{label}_{name}"
+            solver.addFunction(name, family, name=custom_name)
+            group_functions.append(custom_name)
     ap = AeroProblem(name="wing", mach=cond["mach"],
                      alpha=cond.get("alpha_deg", cond.get("alpha_initial_deg")),
                      reynolds=cond["reynolds"], reynoldsLength=cond["reynolds_length_m"],
                      T=cond["temperature_k"], areaRef=ref["area_m2"], chordRef=ref["chord_m"],
                      xRef=ref["moment_center_m"][0], yRef=ref["moment_center_m"][1],
-                     zRef=ref["moment_center_m"][2], evalFuncs=["cl", "cd", "cmx", "cmy", "cmz"])
+                     zRef=ref["moment_center_m"][2], evalFuncs=["cl", "cd", "cmx", "cmy", "cmz"] + group_functions)
     comm.Barrier()
     setup_seconds = time.perf_counter() - total_start
     solve_start = time.perf_counter()
@@ -241,10 +250,19 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None) -> dict:
     coefficients = {key: float(functions[f"wing_{name}"]) for key, name in
                     (("CL", "cl"), ("CD", "cd"), ("CMx", "cmx"), ("CMy", "cmy"), ("CMz", "cmz"))}
     coefficients["CM"] = coefficients["CMz"]
+    group_coefficients = {}
+    for label in function_groups:
+        values = {key: float(functions[f"wing_{label}_{name}"]) for key, name in
+                  (("CL", "cl"), ("CD", "cd"), ("CMx", "cmx"), ("CMy", "cmy"), ("CMz", "cmz"))}
+        values["CM"] = values["CMz"]
+        group_coefficients[label] = values
+    checked_coefficients = dict(coefficients)
+    for label, values in group_coefficients.items():
+        checked_coefficients.update({f"{label}_{key}": value for key, value in values.items()})
     solved_alpha = float(ap.alpha)
     convergence = convergence_report(solver.getResNorms(), tolerance=request["numerics"]["l2_convergence"],
                                      solve_failed=ap.solveFailed, fatal_failed=ap.fatalFail,
-                                     coefficients=coefficients, target_cl=cond.get("target_cl"),
+                                     coefficients=checked_coefficients, target_cl=cond.get("target_cl"),
                                      trim_tolerance=request["numerics"]["trim_tolerance"],
                                      trim_converged=None if trim is None else bool(trim["converged"]),
                                      solved_alpha_deg=solved_alpha)
@@ -259,6 +277,9 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None) -> dict:
     return {"schema_version": 1, "backend": "adflow", "status": "ok" if convergence["converged"] else "not_converged",
             "case_sha256": request["case_sha256"], "identity": identity,
             "coefficients": {k: v if math.isfinite(v) else None for k, v in coefficients.items()},
+            "group_coefficients": {label: {k: v if math.isfinite(v) else None for k, v in values.items()}
+                                   for label, values in group_coefficients.items()},
+            "function_groups": function_groups,
             "solved_alpha_deg": solved_alpha if math.isfinite(solved_alpha) else None, "convergence": convergence,
             "iterations_last_solve": iterations_last_solve,
             "iterations_kind": "major; history row count excluding initial row",

@@ -1,6 +1,33 @@
-# MDO · AeroTransformer reproduction workbench
+# CFD × Foundation Model validation workbench
 
-先把论文中的**真实模型 + 真实 CFD 数据**跑通，再判断是否值得进入 AI 辅助优化。
+先独立验证 **FM 能否在足够准确、可校准的前提下替代 CFD**。当前不搭建外层 MDO。
+
+## 最新入口：真实适配 + 独立测试 + 置信度
+
+```bash
+git clone https://github.com/hongyi-lab/MDO.git
+cd MDO
+bash scripts/bootstrap_server.sh cuda
+bash scripts/run_validation.sh cuda:0
+```
+
+已有仓库先 `git pull --ff-only`。脚本下载固定版本的 72 个真实 CRMpert 样本（约 170 MB），
+按几何分为 24 训练 / 24 校准 / 24 测试，冻结主干、训练原模型输出层，再比较原模型与适配模型。
+配置在 `configs/cfd_validation.json`；固定训练轮数，测试集不用于调参或选择 checkpoint。
+
+输出 `results/validation_<时间>/report.html` 可直接双击：
+三维机翼压力同步旋转、CFD/原模型/适配模型对照、翼剖面曲线、独立测试误差、校准区间与回退决定。
+JSON 和完整数组保存在同目录，可追溯每一项数字。
+
+**首轮 CPU 实测：阻力平均误差 8.71 → 6.54 drag counts，降低约 24.9%。**
+但校准区间半宽仍有 14.10 counts，超过事先设置的 5-count 容差，故 24 个测试样本全部要求 CFD。
+这说明轻量适配改善了平均精度，**尚未达到保精度放行条件，也没有证明整体加速**。
+名义覆盖率 90%，本次 24 个测试几何实测为 87.5%；不是可靠性认证。
+
+这一步使用公开 CFD 标签，没有新跑 CFD。真实服务器求解入口与新定义的同几何开发案例见
+[独立验证运行说明](docs/CFD_VALIDATION.md) 和 [匹配 CFD 案例](docs/MATCHED_CFD.md)。
+不要将新案例的置信度直接沿用 CRMpert 的校准结果。
+可复核数字见 [首轮 CPU 结果记录](docs/cfd_validation_cpu.json)。
 
 第一条主线复刻 [AeroTransformer](https://arxiv.org/abs/2604.18062)：使用作者公开的 ATsurf 权重、[CRMpert](https://huggingface.co/datasets/thuerey-group/CRMpert) 表面数据，以及 floGen / cfdpost 的原始模型和力积分代码。源码、权重和数据均固定版本；不是另写一个同名网络。
 
@@ -14,9 +41,10 @@
 | `mdo-demo screen` | 固定 Mach 下筛选离散候选机翼 | 检查代理选出的候选在 CFD 标签下是否满足升力要求 |
 | `scripts/run_cfd.py` | ADflow 真实 CPU 求解 | 记录收敛、系数、网格、MPI 数量、耗时与资源 |
 
-当前还没有实现完整 FEM 耦合、STW Case 4、经过验证的连续形状优化或新的 probing 算法。`screen` 是离散候选演示，不包装成完整 MDO。
+已实现输出层 probing 和全参数微调入口、几何隔离校准、拒绝不可靠预测的服务接口。
+完整 FEM 耦合、STW Case 4、节点力映射、优化梯度验证仍未实现；`screen` 只是较早的离散候选演示。
 
-## A6000 服务器：先跑这一组
+## 较早的 8 样本模型安装检查（可选）
 
 Linux + Git + Python 3.12（推荐）；模型环境与 CFD Docker 环境分开。已有驱动不需要重装。
 

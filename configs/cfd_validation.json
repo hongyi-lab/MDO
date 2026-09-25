@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "seed": 7,
+  "shape_counts": {"train": 24, "calibration": 24, "test": 24},
+  "adaptation": {"mode": "head", "epochs": 10, "batch_size": 1, "lr": 0.0001},
+  "alpha": 0.1,
+  "tolerances": {"CL": 0.01, "CD": 0.0005},
+  "notice": "Exploratory tolerances (CD=5 drag counts), not certified engineering acceptance criteria. Freeze before viewing held-out results. Cp, Cf and CM remain diagnostics. Calibration concerns published surface-integrated coefficients, not live solver coefficients."
+}

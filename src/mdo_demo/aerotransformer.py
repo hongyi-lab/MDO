@@ -28,6 +28,17 @@ RELEASED_WEIGHT_HASHES = {
 }
 
 
+def prediction_fingerprint(provenance):
+    """Bind calibration to weights, architecture and field postprocessing code."""
+    payload = {key: provenance[key] for key in ("weights_sha256", "config_sha256", "adapter_sha256")}
+    for name in ("flogen", "cfdpost"):
+        source = provenance[name]
+        payload[name] = {key: source.get(key) for key in
+                         ("actual_revision", "module_sha256", "tracked_files_modified")}
+    payload["field_scales"] = FIELD_SCALES.tolist()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
 def _add_upstream_paths() -> None:
     root = Path(__file__).resolve().parents[2]
     for name in ("floGen", "cfdpost"):
@@ -118,6 +129,7 @@ class AeroTransformerPredictor:
             "expected_model_revision": MODEL_REVISION,
             "weights_sha256": hashlib.sha256(weights_path.read_bytes()).hexdigest(),
             "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "adapter_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "flogen": _source_provenance(model_module, FLOGEN_REVISION),
             "cfdpost": _source_provenance(post_module, CFDPOST_REVISION),
             "device": str(self.device),
@@ -136,6 +148,8 @@ class AeroTransformerPredictor:
             self.provenance["matches_asset_manifest"] = (
                 manifest.get("weights_sha256") == self.provenance["weights_sha256"]
                 and manifest.get("config_sha256") == self.provenance["config_sha256"])
+            if self.provenance["matches_asset_manifest"] and manifest.get("kind") == "aerotransformer_adaptation":
+                self.provenance["evaluation_mode"] = "local_fixed_budget_adaptation_with_training_manifest"
         self.load_seconds = perf_counter() - start
 
     def integrate_reference(self, sample: dict[str, Any]) -> dict[str, float]:

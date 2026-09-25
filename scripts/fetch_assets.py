@@ -9,6 +9,7 @@ are transferred; their original source sample/shape IDs are recorded.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -51,7 +52,7 @@ def request_bytes(url: str, *, start: int | None = None, size: int | None = None
         headers["Range"] = f"bytes={start}-{start + size - 1}"
         # Distinguish cached ranges at HTTP intermediaries.
         url += f"?download=true&range_start={start}&range_size={size}"
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             with urlopen(Request(url, headers=headers), timeout=90) as response:
                 if start is not None:
@@ -59,8 +60,10 @@ def request_bytes(url: str, *, start: int | None = None, size: int | None = None
                     if response.status != 206 or not response.headers.get("Content-Range", "").startswith(expected):
                         raise RuntimeError("Server did not honor requested HTTP Range; aborting large download")
                     payload = response.read(size + 1)
-                    if len(payload) != size:
-                        raise RuntimeError("Incomplete or oversized ranged response")
+                    if len(payload) < size:
+                        raise OSError(f"Incomplete ranged response: {len(payload)} of {size} bytes")
+                    if len(payload) > size:
+                        raise RuntimeError("Oversized ranged response")
                     return payload
                 length = response.headers.get("Content-Length")
                 if length and int(length) > maximum:
@@ -70,7 +73,7 @@ def request_bytes(url: str, *, start: int | None = None, size: int | None = None
                     raise RuntimeError(f"Refusing asset larger than {maximum} bytes")
                 return payload
         except (OSError, TimeoutError):
-            if attempt == 2:
+            if attempt == 4:
                 raise
             time.sleep(attempt + 1)
     raise AssertionError("unreachable")
@@ -105,7 +108,7 @@ def npy_header(url: str) -> tuple[tuple[int, ...], np.dtype, int]:
     return shape, dtype, raw.tell()
 
 
-def fetch_rows(filename: str, rows: list[int], destination: Path) -> dict:
+def fetch_rows(filename: str, rows: list[int], destination: Path, workers: int = 4) -> dict:
     url = f"{DATA_BASE}/{filename}"
     shape, dtype, offset = npy_header(url)
     if not rows or min(rows) < 0 or max(rows) >= shape[0]:
@@ -113,13 +116,17 @@ def fetch_rows(filename: str, rows: list[int], destination: Path) -> dict:
     row_bytes = int(np.prod(shape[1:])) * dtype.itemsize
     out = np.empty((len(rows), *shape[1:]), dtype=dtype)
     ranges = []
-    for local_id, source_id in enumerate(rows):
+    def fetch(source_id):
         start = offset + source_id * row_bytes
         raw = request_bytes(url, start=start, size=row_bytes)
-        out[local_id] = np.frombuffer(raw, dtype=dtype).reshape(shape[1:])
-        ranges.append({"source_row": source_id, "start": start, "length": row_bytes,
-                       "sha256": hashlib.sha256(raw).hexdigest()})
-        print(f"{filename}: row {local_id + 1}/{len(rows)}", flush=True)
+        return raw, {"source_row": source_id, "start": start, "length": row_bytes,
+                     "sha256": hashlib.sha256(raw).hexdigest()}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for local_id, (raw, metadata) in enumerate(pool.map(fetch, rows)):
+            out[local_id] = np.frombuffer(raw, dtype=dtype).reshape(shape[1:])
+            ranges.append(metadata)
+            if (local_id + 1) % 16 == 0 or local_id + 1 == len(rows):
+                print(f"{filename}: row {local_id + 1}/{len(rows)}", flush=True)
     with destination.with_suffix(".npy.part").open("wb") as handle:
         np.save(handle, out, allow_pickle=False)
     destination.with_suffix(".npy.part").replace(destination)
@@ -144,7 +151,10 @@ def main() -> None:
     parser.add_argument("--model", choices=tuple(WEIGHTS), default="ATsurf_S")
     parser.add_argument("--root", type=Path, default=Path("assets"))
     parser.add_argument("--data-dir", type=Path, help="Alternative subset destination")
+    parser.add_argument("--workers", type=int, default=4, help="Concurrent HTTP ranges, 1 to 8")
     args = parser.parse_args()
+    if not 1 <= args.workers <= 8:
+        parser.error("--workers must be between 1 and 8")
     model_dir = args.root / "AeroTransformer" / args.model
     model_size, model_sha = WEIGHTS[args.model]
     download_small(f"{MODEL_BASE}/{args.model}/best_model_weights", model_dir / "best_model_weights", model_sha, model_size)
@@ -175,9 +185,9 @@ def main() -> None:
     np.save(data_dir / "index.npy", index[ids], allow_pickle=False)
     files = {"index.npy": {"source_sha256": DATA_SHA256["index.npy"], "source_whole_file_hash_verified": True,
                             "local_sha256": sha256(data_dir / "index.npy")}}
-    files["data.npy"] = fetch_rows("data.npy", ids, data_dir / "data.npy")
+    files["data.npy"] = fetch_rows("data.npy", ids, data_dir / "data.npy", args.workers)
     for filename in ("geom0.npy", "origingeom.npy"):
-        files[filename] = fetch_rows(filename, geometry_ids, data_dir / filename)
+        files[filename] = fetch_rows(filename, geometry_ids, data_dir / filename, args.workers)
     download_small(f"{DATA_BASE}/README.md", data_dir / "UPSTREAM_DATASET_CARD.md")
     manifest = {"schema_version": 1, "dataset": "thuerey-group/CRMpert", "revision": DATA_REVISION,
                 "license": "CC-BY-SA-4.0", "sample_ids": ids, "geometry_shape_ids": geometry_ids,
