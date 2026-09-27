@@ -1,0 +1,84 @@
+{
+  "scope": "verified build and single-point integration; no optimized MDO result yet",
+  "build_receipt": {
+    "created_utc": "2026-09-27T12:49:49.893838+00:00",
+    "checks": {
+      "local_tests": true,
+      "actual_tacs_mechanics": true,
+      "fm_to_tacs_single_point": true,
+      "native_field_reintegration": true
+    },
+    "protocol_sha256": "09b01c630280a2b993ebaafd3077c60ab1467ba209244a4d8d1ff0f073f630b3",
+    "base_geometry_sha256": "1007b8bac9946332192232831ed5f38204cf62eb37128a6edfcdb389011816bf",
+    "code_files": {
+      "src/mdo_demo/aero_contract.py": "f7317fbab4ff2089c9a05c1b12c7d0f0a2af4c76de68a0b7a3261bdb72c06818",
+      "src/mdo_demo/aerostructural.py": "1ab3b853b4fa1c104d1cccd243a95b4a6aab68798ff1b9f9ec365b5662d119eb",
+      "src/mdo_demo/aerostructural_runtime.py": "f0477a21a0cad56ff0f97a8942c8badb7fc0ecf7aef6ffa841032f245f1ab5c8",
+      "src/mdo_demo/structural.py": "98e69017e2b83fc00ca3719ac968861512d8f7bb82d722b18ca3c7d73b5a9ff4",
+      "scripts/run_aerostructural.py": "799577793bc80c954e8111c79542766f9699240578fdf8d95c9fa13eb55e2c02",
+      "scripts/run_aerostructural_pair.py": "c6859813f10bdc706d9261d9511c8acced03c70d244d1f513c60e5e0a4725045",
+      "scripts/run_structure.py": "7e684b30ce34319d15131b383ef57ac5137bbde030b1b42cdb8dc1484ba7ca49",
+      "scripts/compare_aerostructural.py": "8ab1c9ef016ffa2283f8d0c223c741a9fcb056e0925e419a7ab98a4fee0f8542",
+      "scripts/export_native_cfd_surface.py": "a36d4040b54475b68f77af5a0c07f3370b9a2bcf0257d8a564ecb7fc42215464",
+      "scripts/probe_aerostructural_runtime.py": "93260f06058a0e93791bb10d37328eca11d2c5c9bba0feaacab29f11b69ab22e",
+      "scripts/run_cfd_rootless.py": "297cae7e282a0ba27eb27247bd2801a784bcb7ad81ca7f59c2e536cf37d51eed",
+      "src/mdo_demo/matched_cfd.py": "e07fdd6a38d6577cff4839e639385ff3219ba9f262e2d121a4eca31f791cc7ce",
+      "src/mdo_demo/cfd.py": "da4780f6840db8931bd8597aec047aa854deba67cd0b3531d0ee3ff53365e572",
+      "src/mdo_demo/aerotransformer.py": "e44ccecf684dd101ce38f65f332d072c329a10507a4e618eb2fbf04af670c5cf"
+    },
+    "local_tests": {
+      "run": 148,
+      "skipped": 1,
+      "log_sha256": "c69adc7bc4bc1af1a9ec642bd3053e40a765df93f017b6dd3d0e62f98d77e86c"
+    },
+    "actual_tacs_tests_log_sha256": "9c3f7c735baaa7f5ae559cad4874500fe30c494e7be7235a24c1210062154116",
+    "fm_single_result_sha256": "05a30daa91ed8b30500427b631160336f452a37b6791e331a939481d0e6e371e",
+    "native_interface_audit_sha256": "5e9174c2e2406fb1d87ebf70ffd13fa9e3ca7498a486f5b90b56e4ba84d25acc",
+    "cfd_reference_converged": false,
+    "ready_for_bounded_experiment": true,
+    "notes": "Build checks passed; no new optimized design or MDO acceleration measured. Archived CFD used only to check interface algebra."
+  },
+  "fm_build_point": {
+    "alpha_deg": 0.0,
+    "mass_kg": 27.96657943616028,
+    "CL": 0.6193032690229902,
+    "CD": 0.02863264769989722,
+    "ks_failure": 0.7836775247669027,
+    "tip_displacement_m": 0.20996693549073403,
+    "tip_limit_m": 0.15,
+    "feasible": false,
+    "nodes": 228,
+    "shell_elements": 240,
+    "tacs_solve_seconds": 0.006318423897027969,
+    "complete_single_point_wall_seconds": 3.5003670416772366,
+    "force_transfer_error_N": 2.0513894433535222e-10,
+    "moment_transfer_error_Nm": 4.048150598665e-10,
+    "structural_mesh_sha256": "cf35f3066093f72f0ecba1b1d5664cebb078ab414ad80e5120b599d199dd3951"
+  },
+  "native_interface_audit": {
+    "passed": true,
+    "absolute_coefficient_reintegration_errors": {
+      "CL": 2.0005056260430365e-06,
+      "CD": 3.530201531237731e-07,
+      "CMx": 2.2425543870774334e-06,
+      "CMy": 5.506690266138259e-07,
+      "CMz": 1.478682602695791e-06
+    },
+    "source_converged": false,
+    "qualified_flow_reference": false
+  },
+  "new_experiment": {
+    "run_name": "oneway_aerostructural_v1_20260927T1255",
+    "launched_utc": "2026-09-27T12:51:12+00:00",
+    "status_at_initial_check": "running_adflow_first_point",
+    "alpha_initial_deg": 0.0,
+    "mach": 0.800000011920929,
+    "mpi_ranks": 8,
+    "residual_requirement": 1e-10,
+    "max_internal_iterations": 3000,
+    "unique_cfd_optimization_budget": 6,
+    "additional_final_verification_budget": 3,
+    "new_training": false
+  },
+  "equal_quality_mdo_speedup": null
+}

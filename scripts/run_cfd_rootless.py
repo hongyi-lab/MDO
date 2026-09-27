@@ -29,7 +29,8 @@ def main():
     env = dict(item.split("=", 1) for item in config["config"]["Env"])
     env.update(HOME="/home/mdolabuser", USER="root", LOGNAME="root", OMP_NUM_THREADS="1",
                OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1", MPLCONFIGDIR="/tmp/matplotlib",
-               PYTHONDONTWRITEBYTECODE="1", OMPI_ALLOW_RUN_AS_ROOT="1", OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="1",
+               PYTHONDONTWRITEBYTECODE="1", NUMBA_CACHE_DIR="/tmp/mdo_numba_cache",
+               OMPI_ALLOW_RUN_AS_ROOT="1", OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="1",
                MDO_CFD_IMAGE_DIGEST=provenance["source_image"], MDO_CFD_EXECUTION="unprivileged_bwrap_native_cpu")
     command = args.command[1:] if args.command and args.command[0] == "--" else args.command
     if not command:

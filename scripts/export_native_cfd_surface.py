@@ -13,12 +13,44 @@ import sys
 import time
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from mdo_demo.io import read_json, sha256_file, write_json
 from mdo_demo.matched_cfd import load_bundle, pressure_convention_audit
+from mdo_demo.aero_contract import match_native_cells
+
+
+def is_native_wall_zone(name: str) -> bool:
+    """Select the pinned ADflow adiabatic-wall output zones, not all BC zones.
+
+    ADflow's surface CGNS also contains FarFieldBCZone* and SymmetryBCZone*.
+    Their pressure arrays are not body loads. Name selection is subsequently
+    checked by a complete one-to-one match to every native 13-patch wall cell.
+    This is intentionally not a generic reader for another solver's zone names.
+    """
+    return bool(re.fullmatch(r"NSWallAdiabaticBCZone[0-9]+", name))
+
+
+def coordinate_storage_roundoff_bound(xyz, storage_types):
+    """Worst Euclidean vertex/centroid roundoff from stored coordinate precision.
+
+    For each axis, use half the maximum adjacent representable-number spacing
+    of the stored values. A four-vertex arithmetic mean cannot exceed the same
+    coordinate bound. This is metadata, NOT permission to accept changed meshes.
+    """
+    bounds = []
+    for axis, key in enumerate(("CoordinateX", "CoordinateY", "CoordinateZ")):
+        kind = storage_types[key]
+        if kind not in ("RealSingle", "RealDouble"):
+            raise ValueError("Unsupported CGNS coordinate storage precision")
+        dtype = np.float32 if kind == "RealSingle" else np.float64
+        values = np.abs(np.asarray(xyz[axis], dtype=dtype))
+        if not np.isfinite(values).all():
+            raise ValueError("Nonfinite CGNS coordinates")
+        bounds.append(.5*float(np.spacing(values).max()))
+    return {"per_axis_m": bounds, "euclidean_m": float(np.linalg.norm(bounds)),
+            "basis": "half maximum storage ULP per vertex coordinate; centroid is a convex average"}
 
 
 def native_centers(path: Path):
@@ -56,6 +88,11 @@ def read_surface(path: Path, library: Path):
     lib.cg_nzones.argtypes = [i, i, p]
     lib.cg_zone_read.argtypes = [i, i, i, ct.c_char_p, p]
     lib.cg_zone_type.argtypes = [i, i, i, p]
+    # Official API: cg_coord_info returns on-disk storage type, distinct from
+    # the RealDouble buffer requested by cg_coord_read below.
+    # https://cgns.org/standard/MLL/api/c_api.html#c.cg_coord_info
+    lib.cg_ncoords.argtypes = [i, i, i, p]
+    lib.cg_coord_info.argtypes = [i, i, i, i, p, ct.c_char_p]
     lib.cg_sol_info.argtypes = [i, i, i, i, ct.c_char_p, p]
     lib.cg_coord_read.argtypes = [i, i, i, ct.c_char_p, i, p, p, ct.c_void_p]
     lib.cg_field_read.argtypes = [i, i, i, i, ct.c_char_p, i, p, p, ct.c_void_p]
@@ -82,11 +119,27 @@ def read_surface(path: Path, library: Path):
             if ci != ni-1 or cj != nj-1:
                 raise ValueError("Unexpected vertex/cell dimensions")
             zone_name = name.value.decode()
+            zone_meta = {"zone": z, "name": zone_name, "vertex_shape": [nj,ni], "cell_count": ci*cj,
+                         "selected_for_body_loads": is_native_wall_zone(zone_name)}
+            if not zone_meta["selected_for_body_loads"]:
+                zone_meta["exclusion_reason"] = "Not an NSWallAdiabaticBCZone; farfield/symmetry are not body surfaces"
+                zones.append(zone_meta)
+                continue
             location = i()
             check(lib.cg_sol_info(fn, 1, z, 1, name, ct.byref(location)))
             if location.value != 3:
                 raise ValueError("Expected CellCenter Cp/Cf fields")
             xyz = np.empty((3, nj, ni), dtype=np.float64)
+            ncoords, coordinate_kind = i(), i()
+            check(lib.cg_ncoords(fn, 1, z, ct.byref(ncoords)))
+            storage_types = {}
+            for coord in range(1, ncoords.value+1):
+                check(lib.cg_coord_info(fn, 1, z, coord, ct.byref(coordinate_kind), name))
+                if coordinate_kind.value not in (3,4):
+                    raise ValueError("Coordinate storage must be CGNS RealSingle or RealDouble")
+                storage_types[name.value.decode()] = {3:"RealSingle",4:"RealDouble"}[coordinate_kind.value]
+            if set(storage_types) != {"CoordinateX", "CoordinateY", "CoordinateZ"}:
+                raise ValueError("Require exactly Cartesian X/Y/Z coordinates")
             begin, end = (i*2)(1, 1), (i*2)(ni, nj)
             for k, field in enumerate((b"CoordinateX", b"CoordinateY", b"CoordinateZ")):
                 check(lib.cg_coord_read(fn, 1, z, field, 4, begin, end, xyz[k].ctypes.data))
@@ -98,9 +151,13 @@ def read_surface(path: Path, library: Path):
             centers.append(cen.reshape(3,-1).T)
             fields.append(values.reshape(5,-1).T)
             zone_ids.extend([z]*(ci*cj))
-            zones.append({"zone": z, "name": zone_name, "vertex_shape": [nj,ni], "cell_count": ci*cj})
+            zone_meta["coordinate_storage_types"] = storage_types
+            zone_meta["coordinate_storage_roundoff_bound"] = coordinate_storage_roundoff_bound(xyz,storage_types)
+            zones.append(zone_meta)
     finally:
         check(lib.cg_close(fn))
+    if not centers:
+        raise ValueError("No pinned ADflow NSWallAdiabaticBCZone body surfaces found")
     return np.concatenate(centers), np.concatenate(fields), np.asarray(zone_ids), zones
 
 
@@ -123,12 +180,9 @@ def main():
         raise ValueError("Installed pressure integration source is not the audited version")
     native, native_patch = native_centers(args.request.parent/manifest["surface_path"])
     centers, fields, zones, zone_info = read_surface(args.surface, args.library)
-    distance, index = cKDTree(native).query(centers)
-    tolerance = 1e-8 * max(1., float(np.ptp(native, axis=0).max()))
-    if not np.isfinite(fields).all() or distance.max() > tolerance:
-        raise ValueError(f"Nonfinite fields or geometry mismatch: max distance {distance.max()} > {tolerance}")
-    if len(index) != len(native) or len(np.unique(index)) != len(native):
-        raise ValueError("CFD wall cells do not map one-to-one onto every original surface cell")
+    if not np.isfinite(fields).all():
+        raise ValueError("Nonfinite CFD wall fields")
+    index, coordinate_match = match_native_cells(args.request.parent/manifest["surface_path"],centers,zones,zone_info)
     patch = native_patch[index]
     # Fields remain in CFD coordinates, with span in negative z. Mirror z and
     # Cf_z together when plotting them with the FM's positive-z convention.
@@ -138,8 +192,9 @@ def main():
                         mainwing_mask=np.isin(patch, [1,2,3,5,6,7]))
     write_json(args.output.with_suffix(".json"), {"case_sha256": manifest["case_sha256"],
         "surface_sha256": sha256_file(args.surface), "output_sha256": sha256_file(args.output),
-        "native_cell_count": len(native), "cell_coordinate_match_max_m": float(distance.max()),
-        "cell_coordinate_match_tolerance_m": tolerance, "one_to_one_native_cell_match": True,
+        "native_cell_count": len(native), "cell_coordinate_match_max_m": coordinate_match["cell_coordinate_match_max_m"],
+        "cell_coordinate_match_tolerance_m": coordinate_match["cell_coordinate_match_tolerance_m"],
+        "coordinate_match_audit":coordinate_match,"one_to_one_native_cell_match": True,
         "fields": ["Cp", "Cf_x", "Cf_y", "Cf_z", "yplus"], "coordinate_convention": "native CFD negative-z span",
         "pressure_convention_audit": audit, "zones": zone_info, "postprocess_seconds": time.perf_counter()-start,
         "field_ranges": {key: [float(fields[:,k].min()), float(fields[:,k].max())]

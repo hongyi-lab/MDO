@@ -1,10 +1,18 @@
 # CFD × Foundation Model validation workbench
 
-目标是 **用 FM 降低机翼 MDO 的设计成本，并保持或改善最终可行设计的质量**。当前代码仍处于气动组件验证阶段，尚未完成外层气动—结构 MDO。
+目标是 **用 FM 降低机翼 MDO 的设计成本，并保持或改善最终可行设计的质量**。当前在搭建共用 TACS 的单向气动—结构优化基线；FM→载荷→真实壳有限元单点已通过，尚无共同复核后的优化加速结论。
 
 **最终主对比为 CFD 驱动 MDO vs FM 辅助 MDO：共同复核的最终目标值、约束可行性和总优化时间。** 相同质量比时间、相同预算比设计质量，见 [主比较口径](docs/CFD_VS_FM_PRIMARY_COMPARISON.md)。下方预测误差、单次延迟和适配前后结果都是组件证据，尚不能报告整体 MDO 加速。
 
-## 当前服务器试验：先做 MDO 目标适配
+## 新的共用气动—结构基线
+
+见 [协议与实现范围](docs/AEROSTRUCTURAL_BASELINE_V1.md)。两路共用原生机翼、守恒载荷传递、TACS Quad4Shell 翼盒、材料、约束和 COBYLA，只切换 ADflow/FM。首版固定平面形状，优化迎角和蒙皮/腹板厚度，明确为单向尺寸优化，未包含变形反馈、屈曲或整机。
+
+`scripts/run_aerostructural.py --action single|optimize|verify` 使用真实求解器并持有共享计算锁；`scripts/compare_aerostructural.py` 仅在两条路线的最终设计都通过共同 ADflow/TACS 复核后导出对照表。失败 CFD 不能进入优化。
+
+本地开发检查：`python -m pip install -e '.[baseline]'`；真实 TACS/ADflow 仍使用服务器已有官方环境。首轮开发只做搭建验证，通过后才启动新的有界实验，不重复训练。
+
+## 已完成服务器试验：MDO 目标适配
 
 按最新研究顺序，先在 A6000 上尝试 **Large + 表面场/升阻力/展向载荷联合损失**，普通微调留作后续消融。
 说明和目录见 [服务器 MDO 适配试验](docs/SERVER_MDO_PILOT_2026-09-27.md)，设置见 [v2 pilot 配置](configs/mdo_pilot_v2.json)。
@@ -60,7 +68,7 @@ JSON 和完整数组保存在同目录，可追溯每一项数字。
 | `scripts/run_cfd.py` | ADflow 真实 CPU 求解 | 记录收敛、系数、网格、MPI 数量、耗时与资源 |
 
 已实现输出层 probing 和全参数微调入口、几何隔离校准、拒绝不可靠预测的服务接口。
-完整 FEM 耦合、STW Case 4、节点力映射、优化梯度验证仍未实现；`screen` 只是较早的离散候选演示。
+新增节点力/力矩映射和真实 TACS 壳结构入口；双向气弹耦合、STW Case 4 和总导数验证仍未完成。`screen` 只是较早的离散候选演示。
 
 ## 较早的 8 样本模型安装检查（可选）
 
