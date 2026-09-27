@@ -2,13 +2,19 @@
 
 先独立验证 **FM 能否在足够准确、可校准的前提下替代 CFD**。当前不搭建外层 MDO。
 
-## 正式实验前：先按 v1 协议准备
+## 当前服务器试验：先做 MDO 目标适配
+
+按最新研究顺序，先在 A6000 上尝试 **Large + 表面场/升阻力/展向载荷联合损失**，普通微调留作后续消融。
+说明和目录见 [服务器 MDO 适配试验](docs/SERVER_MDO_PILOT_2026-09-27.md)，设置见 [v2 pilot 配置](configs/mdo_pilot_v2.json)。
+使用已冻结的 450 Train + 350 Dev 工况，Calibration/Test 暂不使用。这是开发试验，不能当作正式测试成绩。
+
+## 先前冻结的 v1 协议与划分
 
 [CFD × Foundation Model 实验协议 v1](docs/EXPERIMENT_PROTOCOL_V1.md) 已约定 Large/微调对照、数据来源、训练参数、置信区间、计时及推进条件。
 配套 [固定清单](configs/protocol_v1_split.json) 按几何划分为 144 Train / 48 Dev / 48 Calibration / 48 Test，训练只用其中 450 个真实 CFD 工况。
 已看过的 77 个机翼全部放入训练范围；旧 pilot 的测试结果作为探索记录。
 
-**这是已冻结的实验计划，完整四分组运行器尚待接入。下方 `run_validation.sh` 仍运行旧 72 样本 pilot，不执行 v1。**
+**v1 的完整实验矩阵尚未执行。v2 新入口使用四分组校验并只训练/评估 Train/Dev；下方 `run_validation.sh` 仍运行旧 72 样本 pilot，不执行 v1 或 v2。**
 
 ## 已可运行的 72 样本 pilot：真实适配 + 置信度
 

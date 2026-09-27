@@ -1,0 +1,39 @@
+{
+  "protocol_id": "CFD-FM-v2-MDO-pilot",
+  "date": "2026-09-27",
+  "status": "exploratory_development_only_not_formal_test",
+  "reason": "User prioritizes MDO-targeted adaptation; ordinary fine-tuning is deferred to a later ablation.",
+  "split_manifest": "configs/protocol_v1_split.json",
+  "split_file_sha256": "e673863692913f4fdf09982cae3a44f402c379ee596ceba463ac12d0eece6c8f",
+  "model": "ATsurf_L",
+  "comparisons": ["official_pretrained_Large", "Large_MDO_objective_full_parameter_adaptation"],
+  "train_samples": 450,
+  "dev_samples": 350,
+  "calibration_and_test": "sealed; no fields fetched or evaluated in this pilot",
+  "training": {
+    "mode": "full",
+    "epochs": 5,
+    "batch_size": 1,
+    "learning_rate": 0.00001,
+    "optimizer": "Adam",
+    "weight_decay": 0.0,
+    "max_grad_norm": 1.0,
+    "seed": 7,
+    "precision": "float32",
+    "amp": false,
+    "tf32": false,
+    "checkpoint": "fixed_last_epoch"
+  },
+  "loss": {
+    "field": "MSE of [Cp,150Cf_stream,300Cf_span]",
+    "cl": "squared error of CL re-integrated from fields, divided by 0.01 squared",
+    "cd": "squared error of CD re-integrated from fields, divided by 0.0005 squared",
+    "spanwise": "span-width-weighted squared dCL/deta error divided by 0.5 squared",
+    "weights": {"field": 1.0, "cl": 0.01, "cd": 0.01, "spanwise": 0.1},
+    "target_source": "all physical targets derived from the same published CFD surface fields",
+    "note": "Spanwise nondimensional loads are not a completed conservative FEM nodal-force interface."
+  },
+  "resource_probe": {"warmup_updates": 5, "measured_updates": 20, "discard_probe_weights": true},
+  "dev_policy": "Report all results; choose any follow-up changes on Dev only, keep Calibration/Test sealed. This pilot does not complete v1 or establish blind-test performance.",
+  "cfd_policy": "A few explicitly matched cases, run to convergence with solver checks; no arbitrary ten-minute cap, no full CFD dataset. No equal-accuracy speedup claim if definitions or accuracy do not match."
+}

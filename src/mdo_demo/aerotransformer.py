@@ -150,6 +150,8 @@ class AeroTransformerPredictor:
                 and manifest.get("config_sha256") == self.provenance["config_sha256"])
             if self.provenance["matches_asset_manifest"] and manifest.get("kind") == "aerotransformer_adaptation":
                 self.provenance["evaluation_mode"] = "local_fixed_budget_adaptation_with_training_manifest"
+            if self.provenance["matches_asset_manifest"] and manifest.get("kind") == "aerotransformer_mdo_adaptation":
+                self.provenance["evaluation_mode"] = "local_mdo_objective_adaptation_development_pilot"
         self.load_seconds = perf_counter() - start
 
     def integrate_reference(self, sample: dict[str, Any]) -> dict[str, float]:
