@@ -1,0 +1,75 @@
+{
+  "run_id": "mdo_large_v2_5ep_20260927T065432Z",
+  "protocol": "CFD-FM-v2-MDO-pilot",
+  "partition": "dev",
+  "train_samples": 450,
+  "dev_samples": 350,
+  "dev_geometries": 48,
+  "epochs": 5,
+  "seed": 7,
+  "checkpoint_selection": "Fixed final epoch, no dev selection",
+  "before": {
+    "samples": 350,
+    "geometries": 48,
+    "aggregation": "equal geometry weights, equal condition weights within geometry",
+    "CL": {
+      "mae": 0.014548845719256116,
+      "rmse": 0.019120605698885795,
+      "p95_geometry_max_abs": 0.05089631638237091,
+      "max_abs": 0.061698473256887265
+    },
+    "CD": {
+      "mae": 0.0009364233425501094,
+      "rmse": 0.0012134587672445623,
+      "p95_geometry_max_abs": 0.003885512092149275,
+      "max_abs": 0.005262250169121893
+    },
+    "Cp_mean_rmse": 0.04639264931726977,
+    "Cf_stream_mean_rmse": 0.00021799239765094613,
+    "Cf_span_mean_rmse": 0.00011120073900009982,
+    "spanwise_lift_mean_rmse": 0.021654844049885224,
+    "CD_drag_counts_mae": 9.364233425501094,
+    "normalized_coefficient_score": 1.8728466851002188,
+    "median_prediction_seconds": 0.032375575974583626,
+    "p95_prediction_seconds": 0.0355883376672864
+  },
+  "after": {
+    "samples": 350,
+    "geometries": 48,
+    "aggregation": "equal geometry weights, equal condition weights within geometry",
+    "CL": {
+      "mae": 0.005933955500691917,
+      "rmse": 0.008295694437654511,
+      "p95_geometry_max_abs": 0.03270788730921459,
+      "max_abs": 0.03364512093007954
+    },
+    "CD": {
+      "mae": 0.000518894069605506,
+      "rmse": 0.0006958700805339731,
+      "p95_geometry_max_abs": 0.0026935552655223786,
+      "max_abs": 0.003679306598322496
+    },
+    "Cp_mean_rmse": 0.042739384534936614,
+    "Cf_stream_mean_rmse": 0.0002013118344369722,
+    "Cf_span_mean_rmse": 0.00010115231406076146,
+    "spanwise_lift_mean_rmse": 0.014859961046651896,
+    "CD_drag_counts_mae": 5.18894069605506,
+    "normalized_coefficient_score": 1.037788139211012,
+    "median_prediction_seconds": 0.03219111077487469,
+    "p95_prediction_seconds": 0.033231196179986
+  },
+  "warning": "Dev exploratory results against released CFD fields; not blind test, calibrated reliability or live CFD speedup",
+  "source_files": {
+    "after_evaluation_sha256": "20c3ddbbd8257a0d716645d692a28760b1694fe1f1bfb17ddaf949a8abfd5d9a",
+    "before_evaluation_sha256": "83556606f870c8434bb6b30ae84863515efc08ad7140ef16bdb89da3e4f40ed3"
+  },
+  "live_cfd": {
+    "mesh_and_cfd_seconds": 2792.8195907995105,
+    "relative_residual": 7.187434132736451E-05,
+    "solve_seconds": 2566.3360355570912,
+    "case": "alpha6p71_mach0p8_L81_v2",
+    "speedup": null,
+    "status": "not_converged",
+    "required_residual": 1E-10
+  }
+}
