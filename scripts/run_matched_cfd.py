@@ -32,14 +32,17 @@ def main() -> int:
     run.add_argument("--request", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--wall-normal-layers", type=int, default=81)
-    run.add_argument("--solver-preset", choices=("aerotransformer", "robust_rans"), default="aerotransformer",
+    run.add_argument("--solver-preset", choices=("aerotransformer", "robust_rans", "robust_rans_late_nk"), default="aerotransformer",
                      help="Numerical solver strategy; neither changes the physical case nor loosens the convergence criterion")
+    run.add_argument("--max-cycles", type=int, default=3000, help="Declared internal iteration budget; residual criterion remains 1e-10")
     run.add_argument("--reuse-mesh-result", type=Path, help="Reuse a hash-verified positive mesh from a previous result with unchanged native surface and mesh settings")
     compare = sub.add_parser("compare", help="Diagnostic pair, not an equal-accuracy speedup claim")
     compare.add_argument("--prediction", type=Path, required=True)
     compare.add_argument("--cfd-result", type=Path, required=True)
     compare.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.action == "run" and args.max_cycles <= 0:
+        parser.error("--max-cycles must be a positive integer")
     if args.action == "prepare":
         result = prepare_bundle(args.input_json, args.output, args.upstream,
                                 allow_reconstructed_case=args.allow_reconstructed_case)
@@ -84,7 +87,8 @@ def main() -> int:
         comm = MPI.COMM_WORLD
         try:
             result = run_bundle(args.request, args.output, comm=comm, wall_normal_layers=args.wall_normal_layers,
-                                reuse_mesh_result=args.reuse_mesh_result, solver_preset=args.solver_preset)
+                                reuse_mesh_result=args.reuse_mesh_result, solver_preset=args.solver_preset,
+                                max_cycles=args.max_cycles)
             if comm.rank == 0:
                 print(f"CFD status={result['status']}; {args.output / 'result.json'}", flush=True)
             return 0 if result["status"] == "ok" else 2

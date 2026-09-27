@@ -397,8 +397,13 @@ def reusable_mesh(manifest: dict, source_result: Path, options: dict) -> tuple[P
 
 
 def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layers: int = 81,
-               reuse_mesh_result: Path | None = None, solver_preset: str = "aerotransformer") -> dict:
+               reuse_mesh_result: Path | None = None, solver_preset: str = "aerotransformer",
+               max_cycles: int = 3000) -> dict:
     """Collective pyHyp + ADflow execution on Linux, with no stale result reuse."""
+    if type(max_cycles) is not int or max_cycles <= 0:
+        raise ValueError("max_cycles must be a positive integer")
+    if solver_preset not in {"aerotransformer", "robust_rans", "robust_rans_late_nk"}:
+        raise ValueError("Unsupported matched CFD solver preset")
     from mpi4py import MPI
     comm = MPI.COMM_WORLD if comm is None else comm
     start = time.perf_counter()
@@ -447,7 +452,7 @@ def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layer
     raw = {"schema_version": 1, "problem_id": "new-matched-wing-cfd-v1", "geometry_id": manifest["identity"]["case_name"],
            "geometry_sha256": manifest["identity"]["surface_sha256"], "mesh_path": str(volume),
            "condition": manifest["identity"]["condition"], "reference": manifest["identity"]["reference"],
-           "numerics": {"preset": solver_preset, "l2_convergence": 1e-10, "max_cycles": 3000},
+           "numerics": {"preset": solver_preset, "l2_convergence": 1e-10, "max_cycles": max_cycles},
            "provenance": {"bundle_case_sha256": manifest["case_sha256"], "bundle_identity": manifest["identity"]}}
     normalized = validate_request(raw)
     if reuse is not None and normalized["identity"]["volume_mesh_sha256"] != reuse["volume_mesh_sha256"]:

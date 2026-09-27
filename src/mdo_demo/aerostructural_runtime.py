@@ -14,7 +14,7 @@ import numpy as np
 
 from .aero_contract import (from_fm_surface, from_native_export, make_request,
                             native_mainwing_vertices, save_loads)
-from .aerostructural import PhysicsFailure, condition_bundle
+from .aerostructural import PhysicsFailure, condition_bundle, cfd_numerical_policy
 from .io import read_json, write_json
 from .matched_cfd import load_bundle, prediction_sample
 from .structural import FRAME
@@ -22,7 +22,7 @@ from .structural import FRAME
 
 class UnifiedRuntime:
     def __init__(self, project, base_request, protocol, output, *, backend, checkpoint=None,
-                 device="cuda", reuse_mesh_result=None, mpi_ranks=8, solver_preset="robust_rans"):
+                 device="cuda", reuse_mesh_result=None, mpi_ranks=8, solver_preset=None):
         self.project = Path(project).resolve()
         self.code = self.project / "code" / "MDO"
         self.base_request = Path(base_request).resolve()
@@ -36,7 +36,12 @@ class UnifiedRuntime:
         self.mpi_ranks = int(mpi_ranks)
         if not 1 <= self.mpi_ranks <= 32:
             raise ValueError("Invalid declared CPU rank count")
-        self.solver_preset = solver_preset
+        self.cfd_policy = cfd_numerical_policy(protocol)
+        if self.mpi_ranks != self.cfd_policy["mpi_ranks"]:
+            raise ValueError("Runtime MPI ranks differ from the frozen CFD policy")
+        if solver_preset is not None and solver_preset != self.cfd_policy["preset"]:
+            raise ValueError("Runtime solver preset differs from the frozen CFD policy")
+        self.solver_preset = self.cfd_policy["preset"]
         self.model = None
         manifest = load_bundle(self.base_request)
         self.native_vertices = native_mainwing_vertices(self.base_request.parent / manifest["surface_path"])
@@ -108,7 +113,8 @@ class UnifiedRuntime:
             run_dir = output / "cfd"
             args = ["mpirun", "--bind-to", "none", "-np", str(self.mpi_ranks), "python",
                     self.code / "scripts/run_matched_cfd.py", "run", "--request", request_path,
-                    "--output", run_dir, "--solver-preset", self.solver_preset]
+                    "--output", run_dir, "--solver-preset", self.solver_preset,
+                    "--max-cycles", str(self.cfd_policy["max_cycles"])]
             if self.reuse_mesh_result is not None:
                 args += ["--reuse-mesh-result", self.reuse_mesh_result]
             self.image_call(args, output / "cfd.log")

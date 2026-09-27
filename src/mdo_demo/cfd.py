@@ -92,8 +92,8 @@ def validate_request(raw: dict, base_dir: Path = Path(".")) -> dict:
     _keys(supplied, set(), {"preset", "l2_convergence", "max_cycles", "coarse_cycles",
                            "trim_tolerance", "trim_max_iterations"}, "numerics")
     preset = supplied.get("preset", "aerotransformer")
-    if preset not in {"aerotransformer", "tutorial", "robust_rans"}:
-        raise ValueError("numerics.preset must be aerotransformer, tutorial or robust_rans")
+    if preset not in {"aerotransformer", "tutorial", "robust_rans", "robust_rans_late_nk"}:
+        raise ValueError("Unsupported numerics.preset")
     numerics = {"preset": preset, "l2_convergence": 1e-6 if preset == "tutorial" else 1e-10,
                 "max_cycles": 1000 if preset == "tutorial" else 3000,
                 "coarse_cycles": 500, "trim_tolerance": 1e-4, "trim_max_iterations": 20}
@@ -126,13 +126,19 @@ def solver_options(request: dict, output_dir: Path) -> dict:
                "nCycles": n["max_cycles"], "nCyclesCoarse": n["coarse_cycles"]}
     if n["preset"] == "aerotransformer":
         options.update(MGCycle="3w", useNKSolver=False, NKSwitchTol=1e-8)
-    elif n["preset"] == "robust_rans":
+    elif n["preset"] in {"robust_rans", "robust_rans_late_nk"}:
         # Pinned ADflow doc/solvers.rst: implicit single-grid startup, additional
         # DADI turbulence subiterations, exact Jacobian after 3 orders, and NK
         # for final convergence. Changes the solution algorithm, not RANS/SA,
         # the residual criterion, or the maximum internal-iteration budget.
         options.update(MGCycle="sg", nSubiterTurb=10, ANKSecondOrdSwitchTol=1e-3,
                        useNKSolver=True, NKSwitchTol=1e-5)
+        if n["preset"] == "robust_rans_late_nk":
+            # Pinned solver guide: repeated small NK steps and EW tolerance
+            # near 0.8 may indicate premature switching. Fresh recovery run;
+            # a saved volume is not itself an implemented restart policy.
+            options.update(NKSwitchTol=1e-7, writeVolumeSolution=True,
+                           solutionPrecision="double")
     else:
         options.update(MGCycle="sg", nSubiterTurb=10, useNKSolver=True, NKSwitchTol=1e-4)
     return options
@@ -399,7 +405,7 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
             "timing": {"setup_seconds": setup_seconds, "solve_seconds": solve_seconds,
                        "total_seconds": total_seconds, "mpi_ranks": comm.size,
                        "allocated_rank_hours": total_seconds * comm.size / 3600,
-                       "scope": "total: imports+solver setup+solve+surface output+coefficients; excludes mesh generation, input hashing and process launch"},
+                       "scope": "total: imports+solver setup+solve+solution output+coefficients; excludes mesh generation, input hashing and process launch"},
             "solver": {"name": "ADflow", **version, "options": opts,
                        "container_digest": os.environ.get("MDO_CFD_IMAGE_DIGEST"),
                        "api_audit_revision": ADFLOW_API_AUDIT_REVISION,

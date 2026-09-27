@@ -19,8 +19,26 @@ from .matched_cfd import canonical_hash, load_bundle
 VARIABLES = ("alpha_deg", "skin_m", "web_m")
 
 
+def cfd_numerical_policy(cfg: dict) -> dict:
+    """One recorded CFD policy shared by optimization and all verification."""
+    policy = dict(cfg.get("cfd_solver", {"preset": "robust_rans", "max_cycles": 3000,
+                                        "l2_convergence": 1e-10, "mpi_ranks": 8}))
+    if set(policy) != {"preset", "max_cycles", "l2_convergence", "mpi_ranks"}:
+        raise ValueError("CFD policy requires explicit preset, budget, tolerance and ranks")
+    if policy["preset"] not in {"robust_rans", "robust_rans_late_nk"}:
+        raise ValueError("Unsupported shared CFD policy preset")
+    if type(policy["max_cycles"]) is not int or policy["max_cycles"] <= 0:
+        raise ValueError("CFD policy max_cycles must be a positive integer")
+    if policy["l2_convergence"] != 1e-10:
+        raise ValueError("CFD policy must retain the frozen 1e-10 tolerance")
+    if type(policy["mpi_ranks"]) is not int or policy["mpi_ranks"] != 8:
+        raise ValueError("CFD policy must retain the shared eight MPI ranks")
+    return policy
+
+
 def validate_protocol(raw: dict) -> dict:
     cfg = copy.deepcopy(raw)
+    cfd_numerical_policy(cfg)
     if cfg.get("schema_version") != 1 or cfg.get("coupling") != "one_way":
         raise ValueError("Only the explicitly declared one_way integration pilot is implemented")
     if cfg.get("objective") != "wingbox_mass_kg":
