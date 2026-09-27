@@ -9,6 +9,7 @@ import hashlib
 import importlib.metadata
 import json
 import math
+import numbers
 import os
 from pathlib import Path
 import platform
@@ -210,8 +211,51 @@ def convergence_stop_reason(convergence: dict, internal_iterations: int | None, 
 
 
 def _serializable_history(history: dict) -> dict:
-    return {str(key): [float(x) if math.isfinite(float(x)) else None for x in values]
-            for key, values in history.items()}
+    """Preserve solver categories and numeric types; emit strict JSON values."""
+    def convert(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return str(value)
+        if isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, numbers.Integral):
+            return int(value)
+        if isinstance(value, numbers.Real):
+            converted = float(value)
+            return converted if math.isfinite(converted) else None
+        if isinstance(value, (list, tuple)):
+            return [convert(item) for item in value]
+        # ndarray.tolist also handles zero-dimensional arrays and numpy bools;
+        # unlike float(), it preserves categorical strings such as "None".
+        if callable(getattr(value, "tolist", None)):
+            return convert(value.tolist())
+        raise TypeError(f"Unsupported convergence-history value type: {type(value).__name__}")
+
+    if not isinstance(history, dict):
+        raise TypeError("Convergence history must be a dictionary")
+    return {str(key): convert(values) for key, values in history.items()}
+
+
+def optional_history_diagnostics(history_provider) -> dict:
+    """History is optional: its failure must not discard a completed CFD solve."""
+    result = {"convergence_history": None, "iterations_last_solve": None,
+              "internal_iterations_last_solve": None, "diagnostic_warnings": []}
+    try:
+        history = history_provider()
+    except Exception as exc:
+        result["diagnostic_warnings"].append(f"Convergence history unavailable: {type(exc).__name__}: {exc}")
+        return result
+    for name, function in (("iterations_last_solve", history_major_iterations),
+                           ("internal_iterations_last_solve", history_internal_iterations),
+                           ("convergence_history", _serializable_history)):
+        try:
+            result[name] = function(history)
+        except Exception as exc:
+            result["diagnostic_warnings"].append(f"Optional {name} omitted: {type(exc).__name__}: {exc}")
+    return result
 
 
 def _module_provenance(module: Any) -> dict:
@@ -310,12 +354,17 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
                                      trim_tolerance=request["numerics"]["trim_tolerance"],
                                      trim_converged=None if trim is None else bool(trim["converged"]),
                                      solved_alpha_deg=solved_alpha)
-    history = solver.getConvergenceHistory()
-    iterations_last_solve = history_major_iterations(history)
-    internal_iterations = history_internal_iterations(history)
+    history_diagnostics = optional_history_diagnostics(solver.getConvergenceHistory)
+    iterations_last_solve = history_diagnostics["iterations_last_solve"]
+    internal_iterations = history_diagnostics["internal_iterations_last_solve"]
     convergence["stop_reason"] = convergence_stop_reason(convergence, internal_iterations, request["numerics"]["max_cycles"])
     convergence["stop_reason_basis"] = "residual/solver flags and cumulative internal iteration count; inferred without relaxing criteria"
-    trim_major_counts = None if trim is None else [history_major_iterations(item) for item in trim["history"]]
+    trim_major_counts = None
+    if trim is not None:
+        try:
+            trim_major_counts = [history_major_iterations(item) for item in trim["history"]]
+        except Exception as exc:
+            history_diagnostics["diagnostic_warnings"].append(f"Optional trim history omitted: {type(exc).__name__}: {exc}")
     trim_total_major = (sum(trim_major_counts) if trim_major_counts and all(x is not None for x in trim_major_counts)
                         else None)
     memory = memory_report(comm.allgather(_linux_peak_rss_kib()))
@@ -331,7 +380,8 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
             "iterations_last_solve": iterations_last_solve,
             "internal_iterations_last_solve": internal_iterations,
             "configured_max_internal_iterations": request["numerics"]["max_cycles"],
-            "convergence_history": _serializable_history(history),
+            "convergence_history": history_diagnostics["convergence_history"],
+            "diagnostic_warnings": history_diagnostics["diagnostic_warnings"],
             "iterations_kind": "major; history row count excluding initial row",
             "trim_iterations": None if trim is None else int(trim["iterations"]),
             "trim_total_major_iterations": trim_total_major,

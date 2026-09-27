@@ -8,8 +8,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+import numpy as np
 
-from mdo_demo.cfd import _module_provenance, convergence_report, convergence_stop_reason, history_internal_iterations, history_major_iterations, memory_report, solver_options, validate_request
+from mdo_demo.cfd import _module_provenance, _serializable_history, convergence_report, convergence_stop_reason, history_internal_iterations, history_major_iterations, memory_report, optional_history_diagnostics, solver_options, validate_request
 
 
 class CFDContractTests(unittest.TestCase):
@@ -101,6 +102,49 @@ class CFDContractTests(unittest.TestCase):
         self.assertEqual(convergence_stop_reason(state, None, 3000), "solver_stopped_without_convergence_reason_unresolved")
         state["fatal_failed"] = True
         self.assertEqual(convergence_stop_reason(state, 3013, 3000), "solver_fatal_failure")
+
+    def test_realistic_mixed_adflow_history_preserves_categories_and_numpy_types(self):
+        history = {
+            "Iter Type": np.array(["None", "*ANK", "ANK", "NK"], dtype=np.str_),
+            "total minor iters": np.array([0, 3, 21, 45], dtype=np.int64),
+            "Res rho": np.array([2.02e2, 1.10e2, np.nan, np.inf], dtype=np.float64),
+            "Step": [None, np.float32(.5), np.float64(-np.inf), np.float64(1.)],
+            "annotations": np.array([np.str_("None"), None, np.int64(2**60), np.bool_(True)], dtype=object),
+            "scalar numeric": np.float32(.25),
+            "scalar string": np.str_("ANK"),
+            "scalar array": np.array(4, dtype=np.int32),
+        }
+        result = optional_history_diagnostics(lambda: history)
+        self.assertEqual(result["diagnostic_warnings"], [])
+        self.assertEqual(result["iterations_last_solve"], 3)
+        self.assertEqual(result["internal_iterations_last_solve"], 45)
+        serialized = result["convergence_history"]
+        self.assertEqual(serialized["Iter Type"], ["None", "*ANK", "ANK", "NK"])
+        self.assertEqual(serialized["Res rho"], [202., 110., None, None])
+        self.assertEqual(serialized["Step"], [None, .5, None, 1.])
+        self.assertEqual(serialized["annotations"], ["None", None, 2**60, True])
+        self.assertIsInstance(serialized["annotations"][2], int)
+        self.assertEqual(serialized["scalar numeric"], .25)
+        self.assertEqual(serialized["scalar string"], "ANK")
+        self.assertEqual(serialized["scalar array"], 4)
+        self.assertEqual(json.loads(json.dumps(serialized, allow_nan=False)), serialized)
+
+    def test_optional_history_failure_preserves_counts_and_warns_without_throwing(self):
+        history = {"total minor iters": np.array([0, 3, 18]), "unexpected metadata": [object()]}
+        result = optional_history_diagnostics(lambda: history)
+        self.assertEqual(result["iterations_last_solve"], 2)
+        self.assertEqual(result["internal_iterations_last_solve"], 18)
+        self.assertIsNone(result["convergence_history"])
+        self.assertIn("Optional convergence_history omitted", result["diagnostic_warnings"][0])
+        json.dumps(result, allow_nan=False)
+
+    def test_optional_history_fetch_failure_is_not_a_solver_failure(self):
+        def unavailable():
+            raise OSError("history buffer unavailable after completed solve")
+        result = optional_history_diagnostics(unavailable)
+        self.assertIsNone(result["convergence_history"])
+        self.assertIsNone(result["internal_iterations_last_solve"])
+        self.assertIn("history unavailable", result["diagnostic_warnings"][0].lower())
 
     def test_provenance_does_not_take_enclosing_environment_git_revision(self):
         module = SimpleNamespace(__name__="adflow", __file__=str(self.directory/"site-packages/adflow/__init__.py"))

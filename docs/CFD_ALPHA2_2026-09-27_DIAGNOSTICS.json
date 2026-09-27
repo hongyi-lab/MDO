@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "case": "native-alpha2p0-mach0p8-L81-v1",
+  "case_sha256": "3781541896fbe3a8b07f2a64a4fb9d1ff4b8f935d15773e2aba94ec655b30596",
+  "evidence_kind": "diagnostics_recovered_from_stdout_not_complete_solver_result",
+  "source_log_sha256": "1f8496637e3bf281448ff3208b9717d436d9955c7b67f9ccf5db4eafc577d408",
+  "process_exit_code": 3,
+  "postprocess_error": "History serialization incorrectly treated categorical Iter Type 'None' as float",
+  "numerical_status": "iteration_budget_exhausted_without_qualified_convergence",
+  "solver_api_convergence_flags_recovered": false,
+  "freestream_residual_norm_recovered": false,
+  "relative_to_fine_grid_start": 0.0194102090293949,
+  "ratio_note": "Fine-grid-start ratio is not ADflow freestream relative residual, and is not the 1e-10 acceptance metric",
+  "fine_grid_rows": 149,
+  "final_log_row": {
+    "grid_level": 1,
+    "major_iteration": 148,
+    "internal_iteration": 3005,
+    "iteration_type": "*ANK",
+    "CL": 0.8185580729429962,
+    "CD": 0.06897900539055206,
+    "CMz": 0.7703605966146377,
+    "total_residual": 26534.355560296313
+  },
+  "last_10_rows_CL_peak_to_peak": 0.004379813276326305,
+  "last_10_rows_CD_peak_to_peak": 0.00036771554118082694,
+  "timing_from_log": {
+    "total_adflow_call_seconds": 2508.789,
+    "write_solution_seconds": 0.038,
+    "solution_seconds": 2508.747,
+    "initialization_seconds": 18.746
+  },
+  "timing_scope": "Rounded solver stdout timings; not a recovered complete Python pipeline timing; previously generated mesh reused",
+  "surface_cgns_sha256": "6beda63a8ddf4cab69465acd575a8ae2139564cdae22daabf64c0f4a9d0834f1",
+  "reference_eligible": false,
+  "speedup": null,
+  "warning": "This is an unconverged diagnostic field, not a CFD reference or a MDO result"
+}
