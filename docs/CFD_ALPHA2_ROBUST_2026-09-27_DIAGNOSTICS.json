@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "case_sha256": "3781541896fbe3a8b07f2a64a4fb9d1ff4b8f935d15773e2aba94ec655b30596",
+  "cfd_exit": 2,
+  "fm_exits": [
+    0,
+    0
+  ],
+  "queue_finished_utc": "2026-09-27T09:06:49Z",
+  "cfd": {
+    "status": "not_converged",
+    "convergence": {
+      "converged": false,
+      "solve_failed": true,
+      "fatal_failed": false,
+      "residual_initial": 146087326.68654054,
+      "residual_start": 146087326.68654054,
+      "residual_final": 20822.682890161283,
+      "residual_relative_to_freestream": 0.00014253586099799401,
+      "required_l2_convergence": 1e-10,
+      "finite_coefficients": true,
+      "target_cl_absolute_error": null,
+      "finite_solved_alpha": true,
+      "trim_converged": null,
+      "residual_pass": false,
+      "trim_pass": true,
+      "stop_reason": "iteration_budget_exhausted_without_convergence",
+      "stop_reason_basis": "residual/solver flags and cumulative internal iteration count; inferred without relaxing criteria"
+    },
+    "coefficients": {
+      "CL": 0.9446634714012704,
+      "CD": 0.07951658852016585,
+      "CMx": 1.3235339640642898,
+      "CMy": -0.08813259958782788,
+      "CMz": 0.9320135221611403,
+      "CM": 0.9320135221611403
+    },
+    "group_coefficients": {
+      "mainwing": {
+        "CL": 0.9445007789841526,
+        "CD": 0.07897855564973984,
+        "CMx": 1.3232975223936647,
+        "CMy": -0.09114228690982512,
+        "CMz": 0.9317146278052483,
+        "CM": 0.9317146278052483
+      },
+      "trailingedge": {
+        "CL": -4.258436341984063e-05,
+        "CD": 0.0005683569383728785,
+        "CMx": -4.397458015472689e-05,
+        "CMy": -0.0018220981350961854,
+        "CMz": -8.283721142446192e-05,
+        "CM": -8.283721142446192e-05
+      },
+      "tip": {
+        "CL": 0.0002052767805375992,
+        "CD": -3.032406794686135e-05,
+        "CMx": 0.00028041625077982303,
+        "CMy": 0.0048317854570934194,
+        "CMz": 0.00038173156731670057,
+        "CM": 0.00038173156731670057
+      }
+    },
+    "timing": {
+      "setup_seconds": 14.722164694219828,
+      "solve_seconds": 2757.1691936962306,
+      "total_seconds": 2771.920524381101,
+      "mpi_ranks": 8,
+      "allocated_rank_hours": 6.159823387513558,
+      "scope": "total: imports+solver setup+solve+surface output+coefficients; excludes mesh generation, input hashing and process launch",
+      "mesh_seconds": 0.0,
+      "mesh_preparation_seconds": 0.10395592078566551,
+      "mesh_timing_scope": "hash verification and copy of existing mesh; generation_seconds=0",
+      "live_mesh_and_cfd_seconds": 2772.344070792198
+    },
+    "iterations_last_solve": 114,
+    "internal_iterations_last_solve": 3016,
+    "diagnostic_warnings": [
+      "Optional convergence_history omitted: TypeError: Convergence history must be a dictionary"
+    ]
+  },
+  "models": {
+    "pretrained": {
+      "coefficients": {
+        "CL": 0.7873177964164695,
+        "CD": 0.06227690441467063,
+        "CM": 0.7551410965900679
+      },
+      "median_prediction_wall_s": 0.02958475984632969,
+      "p95_prediction_wall_s": 0.03148885648697614,
+      "native_input_preparation_seconds": 0.007427223026752472,
+      "model_load_seconds": 0.7107367739081383,
+      "timed_repeats": 30,
+      "warmup_passes": 10,
+      "fm_validation_status": "frame_aligned_sampling_unverified",
+      "arrays_all_finite": true,
+      "frame_verified": true,
+      "sampling_verified": false
+    },
+    "adapted": {
+      "coefficients": {
+        "CL": 0.7855752200694742,
+        "CD": 0.060810609854449825,
+        "CM": 0.7573883947065799
+      },
+      "median_prediction_wall_s": 0.030036108568310738,
+      "p95_prediction_wall_s": 0.030346180126070977,
+      "native_input_preparation_seconds": 0.007204197347164154,
+      "model_load_seconds": 0.7092733755707741,
+      "timed_repeats": 30,
+      "warmup_passes": 10,
+      "fm_validation_status": "frame_aligned_sampling_unverified",
+      "arrays_all_finite": true,
+      "frame_verified": true,
+      "sampling_verified": false
+    }
+  },
+  "cfd_history_source": "recovered stdout rows, not a restored live solver API history",
+  "cfd_history_rows": 115,
+  "reference_eligible": false,
+  "equal_accuracy_verified": false,
+  "speedup": null,
+  "MDO_result_available": false,
+  "note": "Failed CFD cost and successful FM diagnostic latency are different qualification states; do not compute accepted speedup or model accuracy against these CFD values.",
+  "source_sha256": {
+    "alpha2p0_robust\\result.json": "0889b9f68460c0f52c761a5051bc4c7cd7cf76d7cf3c1c7f2a13dddbc7601d17",
+    "alpha2p0_robust\\solver.log": "486a93007a41b54241acb31fbfb3ed01f379aaec4f5c69c9b63cc2bdcea525a2",
+    "alpha2p0_robust\\recovered_history.csv": "dc6745d7d17235cf25174801e2ea2c35a4b780802abaed4f96c0780dc8bd7a0b",
+    "alpha2p0_robust\\solver_surface\\wing_000_surf.cgns": "437d26f0e7c864597e88ca381024be67a1af3c1f89f85fed7532070d4900f0d9",
+    "alpha2p0_robust\\solver_surface\\wing_000_surf.plt": "afacfe432d734ad2097a6826fc13b7012b48cfe926d2be20185de7911a4d984c",
+    "native_alpha2_frame_v1\\adapted.json": "4bf709a28b1452a21f065042ca44cb3a3ef8fe2e8599dadd8db6058a7f469df9",
+    "native_alpha2_frame_v1\\adapted.npz": "dc240f45a0b383c0b26a701232f67815b55ac76daf8b577d31d4db1238c990fd",
+    "native_alpha2_frame_v1\\pretrained.json": "8d610e273124115189608a9a3e56c14f9ea26ef522bb72bc50d0eaf214504c5c",
+    "native_alpha2_frame_v1\\pretrained.npz": "1c516fdbee0bc89c74630ff9b2912468decb69450daa3469f578e5ac17598b1b"
+  }
+}

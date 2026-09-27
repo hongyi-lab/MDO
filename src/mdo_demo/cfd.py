@@ -5,6 +5,7 @@ This is an independently written adapter to ADflow's public Python interface.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import importlib.metadata
 import json
@@ -217,7 +218,7 @@ def convergence_stop_reason(convergence: dict, internal_iterations: int | None, 
     return "solver_stopped_without_convergence_reason_unresolved"
 
 
-def _serializable_history(history: dict) -> dict:
+def _serializable_history(history: Mapping) -> dict:
     """Preserve solver categories and numeric types; emit strict JSON values."""
     def convert(value):
         if value is None:
@@ -241,8 +242,10 @@ def _serializable_history(history: dict) -> dict:
             return convert(value.tolist())
         raise TypeError(f"Unsupported convergence-history value type: {type(value).__name__}")
 
-    if not isinstance(history, dict):
-        raise TypeError("Convergence history must be a dictionary")
+    # ADflow returns baseclasses CaseInsensitiveDict, a MutableMapping rather
+    # than a built-in dict. Accept the public mapping protocol explicitly.
+    if not isinstance(history, Mapping):
+        raise TypeError("Convergence history must be a mapping")
     return {str(key): convert(values) for key, values in history.items()}
 
 

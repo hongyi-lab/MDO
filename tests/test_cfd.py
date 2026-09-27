@@ -1,5 +1,6 @@
 """Contract tests only: no test pretends to run a real CFD solver."""
 import copy
+from collections import UserDict
 import json
 from pathlib import Path
 import subprocess
@@ -136,6 +137,25 @@ class CFDContractTests(unittest.TestCase):
         self.assertEqual(result["internal_iterations_last_solve"], 18)
         self.assertIsNone(result["convergence_history"])
         self.assertIn("Optional convergence_history omitted", result["diagnostic_warnings"][0])
+        json.dumps(result, allow_nan=False)
+
+    def test_mutable_mapping_history_preserves_mixed_solver_columns(self):
+        # UserDict has the same Mapping-not-dict distinction as the pinned
+        # baseclasses CaseInsensitiveDict returned by ADflow.
+        history = UserDict({
+            "Total Minor Iters": np.array([0, 3, 3016], dtype=np.int64),
+            "Iter Type": np.array(["None", "*ANK", "SANK"], dtype=np.str_),
+            "Res rho": [np.float64(1.2e8), np.float32(.25), np.nan],
+            "Step": [None, np.float64(.75), np.inf],
+        })
+        self.assertNotIsInstance(history, dict)
+        result = optional_history_diagnostics(lambda: history)
+        self.assertEqual(result["diagnostic_warnings"], [])
+        self.assertEqual(result["iterations_last_solve"], 2)
+        self.assertEqual(result["internal_iterations_last_solve"], 3016)
+        self.assertEqual(result["convergence_history"]["Iter Type"], ["None", "*ANK", "SANK"])
+        self.assertEqual(result["convergence_history"]["Res rho"], [1.2e8, .25, None])
+        self.assertEqual(result["convergence_history"]["Step"], [None, .75, None])
         json.dumps(result, allow_nan=False)
 
     def test_optional_history_fetch_failure_is_not_a_solver_failure(self):
