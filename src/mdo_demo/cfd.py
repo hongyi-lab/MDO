@@ -92,7 +92,7 @@ def validate_request(raw: dict, base_dir: Path = Path(".")) -> dict:
     _keys(supplied, set(), {"preset", "l2_convergence", "max_cycles", "coarse_cycles",
                            "trim_tolerance", "trim_max_iterations"}, "numerics")
     preset = supplied.get("preset", "aerotransformer")
-    if preset not in {"aerotransformer", "tutorial", "robust_rans", "robust_rans_late_nk"}:
+    if preset not in {"aerotransformer", "tutorial", "robust_rans", "robust_rans_late_nk", "robust_rans_ank_polish"}:
         raise ValueError("Unsupported numerics.preset")
     numerics = {"preset": preset, "l2_convergence": 1e-6 if preset == "tutorial" else 1e-10,
                 "max_cycles": 1000 if preset == "tutorial" else 3000,
@@ -126,7 +126,7 @@ def solver_options(request: dict, output_dir: Path) -> dict:
                "nCycles": n["max_cycles"], "nCyclesCoarse": n["coarse_cycles"]}
     if n["preset"] == "aerotransformer":
         options.update(MGCycle="3w", useNKSolver=False, NKSwitchTol=1e-8)
-    elif n["preset"] in {"robust_rans", "robust_rans_late_nk"}:
+    elif n["preset"] in {"robust_rans", "robust_rans_late_nk", "robust_rans_ank_polish"}:
         # Pinned ADflow doc/solvers.rst: implicit single-grid startup, additional
         # DADI turbulence subiterations, exact Jacobian after 3 orders, and NK
         # for final convergence. Changes the solution algorithm, not RANS/SA,
@@ -139,6 +139,11 @@ def solver_options(request: dict, output_dir: Path) -> dict:
             # a saved volume is not itself an implemented restart policy.
             options.update(NKSwitchTol=1e-7, writeVolumeSolution=True,
                            solutionPrecision="double")
+        elif n["preset"] == "robust_rans_ank_polish":
+            # Bounded checkpoint diagnostic: use decoupled ANK after observed
+            # stalled NK line searches. Keep residual normalization and physics.
+            options.update(useNKSolver=False, ANKCoupledSwitchTol=1e-16,
+                           writeVolumeSolution=True, solutionPrecision="double")
     else:
         options.update(MGCycle="sg", nSubiterTurb=10, useNKSolver=True, NKSwitchTol=1e-4)
     return options
@@ -304,7 +309,8 @@ def _module_provenance(module: Any) -> dict:
                 if (location.parent / "pyADflow.py").is_file() else None}
 
 
-def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: dict[str, str] | None = None) -> dict:
+def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: dict[str, str] | None = None,
+               restart_file: Path | None = None) -> dict:
     """Collective across MPI ranks. Return nonconverged results for diagnostics only."""
     total_start = time.perf_counter()
     import adflow
@@ -318,6 +324,15 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
         output_dir.mkdir(parents=True, exist_ok=True)
     comm.Barrier()
     opts = solver_options(request, output_dir)
+    if restart_file is not None:
+        checkpoint = Path(restart_file).resolve()
+        restart = request.get("provenance", {}).get("restart", {})
+        if (not checkpoint.is_file() or checkpoint.suffix.lower() != ".cgns"
+                or restart.get("checkpoint_sha256") != sha256_file(checkpoint)):
+            raise ValueError("Restart requires a provenance-bound full-volume checkpoint")
+        if "target_cl" in request["identity"]["condition"]:
+            raise ValueError("Checkpoint refinement currently supports fixed-alpha only")
+        opts["restartFile"] = str(checkpoint)
     identity = request["identity"]
     cond, ref = identity["condition"], identity["reference"]
     solver = ADFLOW(comm=comm, options=opts)
