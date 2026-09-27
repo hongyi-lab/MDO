@@ -1,8 +1,8 @@
 # CFD × Foundation Model validation workbench
 
-先独立验证 **FM 能否在足够准确、可校准的前提下替代 CFD**。当前不搭建外层 MDO。
+目标是 **用 FM 降低机翼 MDO 的设计成本，并保持或改善最终可行设计的质量**。当前代码仍处于气动组件验证阶段，尚未完成外层气动—结构 MDO。
 
-**主对比为 CFD baseline vs 我们的 FM 方法：MDO 相关任务量误差 + 单次计算时间。** 两者须对同一参考、同一机翼/工况评价，见 [主比较口径](docs/CFD_VS_FM_PRIMARY_COMPARISON.md)。下方适配前后结果是辅助对照；目前未测得 CFD 自身误差及合格的匹配加速倍数。
+**最终主对比为 CFD 驱动 MDO vs FM 辅助 MDO：共同复核的最终目标值、约束可行性和总优化时间。** 相同质量比时间、相同预算比设计质量，见 [主比较口径](docs/CFD_VS_FM_PRIMARY_COMPARISON.md)。下方预测误差、单次延迟和适配前后结果都是组件证据，尚不能报告整体 MDO 加速。
 
 ## 当前服务器试验：先做 MDO 目标适配
 
