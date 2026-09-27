@@ -1,0 +1,39 @@
+{
+  "status": "running_at_startup_snapshot",
+  "run_name": "seed_alpha0p2_ank_v1_20260927T204129Z",
+  "started_utc": "2026-09-27T20:41:29.198661+00:00",
+  "checks": {
+    "ank_enabled": true,
+    "nk_disabled": true,
+    "correction_disabled": true,
+    "budget1200": true,
+    "target_alpha_applied": true,
+    "seed_loaded": true,
+    "actual_iteration": true
+  },
+  "launch_resources": {
+    "load_average": [
+      7.27734375,
+      6.76513671875,
+      6.6064453125
+    ],
+    "available_memory_kib": 58406932,
+    "logical_cpus": 32,
+    "mpi_ranks": 8,
+    "threads_per_rank": 1,
+    "shared_machine": true
+  },
+  "protocol_sha256": "c3e8062ca8a01738633a1e275fc3c4ce6fe7378cef09318f1a9cb9faea18dc31",
+  "code_files": {
+    "src/mdo_demo/cfd_seed.py": "a2d028767f648365a5ec5353d19e759b82c49f2e85a3170721707a6ea16a2aaa",
+    "tests/test_cfd_seed.py": "c9b32832ce846c8e27f2e84b422911e04b48425ce8451375a4066ffd040ddf05",
+    "scripts/run_seed_initialization.py": "60c7124f034520ee0992639a35bfe0acb35fffeda4dd53dfd61381eda7300498",
+    "configs/cfd_seed_alpha0p2_probe_v1.json": "c3e8062ca8a01738633a1e275fc3c4ce6fe7378cef09318f1a9cb9faea18dc31",
+    "docs/CFD_FIXED_SEED_SOURCE_AUDIT.md": "b75badf7ee9b83488ccf2c560e8b9fb81ea1a7939e53e376e726588bed13aeca",
+    "src/mdo_demo/cfd.py": "b5446526fb2020e2bd41746d46041337bcb168c4df462f997cf876ca21a845de",
+    "scripts/run_checkpoint_refinement_host.py": "ee7d751d7df835ece53bd01a31c16fd88b9f8d02ced9240a4b80a20f4254e077"
+  },
+  "evidence_archive_sha256": "c97930a150caff15dc70978df6173ab5ef3387b4fa0bb1bf13621e514b3dd23a",
+  "converged": false,
+  "mdo_comparison_complete": false
+}

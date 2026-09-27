@@ -82,7 +82,16 @@ launcher holds the project lock, checks shared CPU/memory margin and leaves all
 other agents' tasks untouched. Source files were backed up and hash-checked
 before deployment; no running project process was changed.
 
-At launch, the result is pending. A supported warm-start API and passing unit
+One startup check confirmed the intended seed file was loaded, the actual target
+angle was applied, NK and inflow correction were disabled, and the declared 1200
+budget was active. The solver had entered real SANK iteration (42 cumulative
+internal iterations, residual 0.2000 from loaded-state 0.2115). This snapshot is
+not convergence. Load was 7.28 on 32 logical CPUs; available memory about 55.7
+GiB. Preflight and startup evidence are downloaded to
+`results/seed_alpha0p2_v1/startup_evidence.tar.gz`, with a numeric record in
+`CFD_FIXED_SEED_STARTUP_RECEIPT.json`. No continuous polling was performed.
+
+The result remains pending at this snapshot. A supported warm-start API and passing unit
 tests are not evidence that this target converges. If successful, inspect the
 actual target identity, residual history, final field audit and force-to-TACS
 path before defining a new common optimization protocol and build receipt.
