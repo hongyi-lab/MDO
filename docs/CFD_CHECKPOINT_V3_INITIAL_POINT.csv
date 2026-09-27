@@ -1,0 +1,2 @@
+case,optimized,feasible,CL,CD,alpha_deg,skin_m,web_m,status,mass_kg,max_displacement_m,tip_displacement_m,ks_failure,solve_seconds,residual_relative_to_freestream,refinement_process_seconds,source_plus_refinement_process_seconds,mpi_ranks
+native_alpha0_mach0p8_initial,False,False,0.7110465360932373,0.032496547253689875,0.0,0.005,0.004,ok,27.96657943616028,0.24333063767575067,0.24333063767575067,0.8902367693828597,0.009373098611831665,5.893492017046605e-11,80.47536419332027,9652.238474201411,8

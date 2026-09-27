@@ -1,7 +1,9 @@
 # Same-case checkpoint recovery: evidence and limits
 
-Recorded 2026-09-28 Sydney / 2026-09-27 UTC. The common MDO comparison is still
-incomplete. This recovery is a bounded CFD diagnostic, not a successful speedup.
+Updated 2026-09-28 Sydney / 2026-09-27 UTC. The checkpoint recovery **converged**
+and its actual fields, common load integration and TACS initial point passed
+their checks. The common optimized-design comparison is still incomplete.
+This successful CFD point is not a successful MDO speedup result.
 
 ## New failure, retained without relabelling
 
@@ -101,13 +103,45 @@ automatic restart of the stopped six-stage MDO queue.
   tests; its log is retained. Tests then passed in the existing scientific
   environment. That environment issue is separate from numerical convergence.
 
-The new process and its mesh initialization were observed after launch. Completion
-and the restart normalization audit were **not yet available at this record**.
-Follow `manifests/active_checkpoint_refinement.json`, not the ended v2 queue.
+The new process completed at **18:48:19 UTC**, exit 0. Final residual ratio was
+**5.893492017046605e-11**, passing the unchanged 1e-10 criterion. The free-stream
+denominator was exactly the source value; restart-start relative difference was
+6.99e-11. Both restart audit and solver acceptance passed. Full refinement process
+cost was **80.475364 seconds**, source plus refinement **9652.238474 seconds**.
+`manifests/active_checkpoint_refinement.json` now points to a completed diagnostic.
+No background computation remains at this update.
 
-If accepted, next audit the actual new fields, common-surface force integration
-and TACS transfer. A subsequent optimization queue needs a tested, versioned CFD
-policy applied to both routes' final checks, plus a new real build receipt.
+The final full-volume grid/fields audit passed again. The converged surface export
+matched all 44,096 native wall cells. Mainwing load reintegration errors were
+6.85e-7 in CL and 2.89e-7 in CD, and real TACS completed with the initial thicknesses:
+
+| Initial-point result | Value |
+|---|---:|
+| CL / CD, common mainwing | 0.7110465 / 0.03249655 |
+| Wingbox mass | 27.966579 kg |
+| KS yield index | 0.890237 |
+| Tip displacement | 0.243331 m |
+| Frozen displacement limit | 0.15 m |
+| Feasible | **No** |
+
+The complete new flow, logs, arrays, structure, audits and postprocessing source
+are saved in `results/overnight_recovery_v2/checkpoint_v3_complete_evidence.tar.gz`.
+Public numeric records are `CFD_CHECKPOINT_V3_RESULT.json` and
+`CFD_CHECKPOINT_V3_INITIAL_POINT.csv`. These are initial-point results, not
+optimized-design results.
+
+Next validate one new-angle initialization from the immutable converged 0-degree
+checkpoint. The current adapter deliberately supports same-case restart only;
+cross-angle initialization requires a new explicit contract allowing only alpha
+to change and computing the target case's own free-stream denominator. The next
+COBYLA proposal is +0.2 degrees (rhobeg 0.1 times alpha scale 2). A bounded ANK
+trial can test this before restoring the optimization queue. It is not yet run.
+
+If supported, freeze one common initial-flow policy for both routes and final
+checks, with hash-bound cache reuse and full recorded preparation costs. A
+subsequent optimization queue needs a tested, versioned CFD policy and a new
+real build receipt. Do not silently edit old protocols/results or repeatedly
+cold-start every point with the failed recipe.
 Checkpoint success alone cannot be represented as finished MDO. If it fails,
 retain the new evidence and diagnose it; do not silently repeat this recipe.
 

@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "scope": "One converged initial CFD-to-TACS analysis; not optimized and not a completed fair MDO comparison",
+  "run_name": "checkpoint_ank_v3_20260927T184659Z",
+  "finished_utc": "2026-09-27T18:48:19.581968+00:00",
+  "exit_code": 0,
+  "convergence": {
+    "converged": true,
+    "solve_failed": false,
+    "fatal_failed": false,
+    "residual_initial": 142581965.0852572,
+    "residual_start": 0.01763690854125374,
+    "residual_final": 0.00840305673004781,
+    "residual_relative_to_freestream": 5.893492017046605e-11,
+    "required_l2_convergence": 1e-10,
+    "finite_coefficients": true,
+    "target_cl_absolute_error": null,
+    "finite_solved_alpha": true,
+    "trim_converged": null,
+    "residual_pass": true,
+    "trim_pass": true,
+    "stop_reason": "convergence_criteria_met",
+    "stop_reason_basis": "residual/solver flags and cumulative internal iteration count; inferred without relaxing criteria"
+  },
+  "restart_audit": {
+    "schema": "adflow_same_case_volume_restart_v1",
+    "passed": true,
+    "accepted": true,
+    "source_result_content_sha256": "27cb711debfe71e32bc84be0fbe3e27a82f5f5d44e7f42f1a0ab862174777125",
+    "checkpoint_sha256": "84826a9fd3250fd86c06ad65ff9feb8eed44b30e9971352f86f2620ec3fe1911",
+    "freestream_denominator_relative_difference": 0.0,
+    "freestream_denominator_rtol": 1e-08,
+    "source_freestream_residual": 142581965.0852572,
+    "current_freestream_residual": 142581965.0852572,
+    "current_starting_residual": 0.01763690854125374,
+    "final_residual": 0.00840305673004781,
+    "source_final_residual": 0.01763690854002143,
+    "checkpoint_start_relative_difference": 6.987099787636453e-11,
+    "checkpoint_start_rtol": 0.01,
+    "final_relative_to_source_freestream": 5.893492017046605e-11,
+    "final_relative_to_current_freestream": 5.893492017046605e-11,
+    "required_l2_convergence": 1e-10,
+    "source_stage_cost": {
+      "seconds": 9568.242690429091,
+      "mpi_ranks": 8,
+      "allocated_rank_hours": 21.26276153428687,
+      "scope": "live_mesh_and_cfd_seconds; includes recorded mesh preparation and CFD"
+    },
+    "refinement_stage_cost": {
+      "seconds": 79.95714929327369,
+      "mpi_ranks": 8,
+      "allocated_rank_hours": 0.17768255398505264,
+      "scope": "refinement_stage_seconds; checkpoint validation, MPI synchronization, solver setup/solve/output; excludes launcher and final JSON serialization"
+    },
+    "continuation_chain_seconds": 9648.199839722365,
+    "continuation_chain_allocated_rank_hours": 21.440444088271924,
+    "cost_scope": "Measured source stage plus this refinement; neither checkpoint generation nor source solve is free. Earlier independent solver-development attempts and unmeasured process launch costs remain separately reported.",
+    "mdo_result": false
+  },
+  "configured_max_internal_iterations": 1200,
+  "major_iterations": 1,
+  "internal_iterations": 42,
+  "refinement_process_seconds": 80.47536419332027,
+  "source_plus_refinement_process_seconds": 9652.238474201411,
+  "common_initial_point": {
+    "status": "qualified_initial_analysis",
+    "optimized": false,
+    "common_verification_complete": false,
+    "mdo_comparison_complete": false,
+    "source_result_sha256": "a203888b6f998b1ec55c5294df0e7864a7be24830dbf8eaf21ab34bba8562b63",
+    "case_sha256": "0b95c2ee17c8e35d50b3792e5c049fcc3537195f57014ba946e9fc8f816fbc6f",
+    "design": {
+      "alpha_deg": 0.0,
+      "skin_m": 0.005,
+      "web_m": 0.004
+    },
+    "coefficients": {
+      "CL": 0.7110465360932373,
+      "CD": 0.032496547253689875,
+      "CY_span": 0.03537283794050735,
+      "CMx": 1.0236862456839528,
+      "CMy": -0.06452045005973014,
+      "CMz": 0.7107070823733611,
+      "CM": 0.7107070823733611
+    },
+    "integration_audit": {
+      "passed": true,
+      "absolute_errors": {
+        "CL": 6.853273812890137e-07,
+        "CD": 2.890927994769754e-07,
+        "CMx": 1.0998432828923654e-06,
+        "CMy": 6.139084027245723e-07,
+        "CMz": 7.619970573413681e-07
+      },
+      "atol": 1e-05,
+      "rtol": 0.001,
+      "comparison": "same mainwing family; physical reference point; integration consistency only"
+    },
+    "structure": {
+      "status": "ok",
+      "mass_kg": 27.96657943616028,
+      "max_displacement_m": 0.24333063767575067,
+      "tip_displacement_m": 0.24333063767575067,
+      "ks_failure": 0.8902367693828597,
+      "solve_seconds": 0.009373098611831665
+    },
+    "constraint_margins": {
+      "lift": 0.4220930721864746,
+      "drag": 0.45839087910516874,
+      "yield": 0.10976323061714033,
+      "tip_displacement": -0.6222042511716712
+    },
+    "feasible": false,
+    "postprocess_structure_seconds": 2.391063593327999,
+    "source_plus_refinement_wall_seconds": 9652.238474201411,
+    "scope": "One converged CFD point mapped to the shared TACS initial wingbox. No optimized candidate or fair MDO speedup yet.",
+    "physics_task_protocol_sha256": "ae0270394e2589090279b04ddcc7e1c133f7e6bc7272d91115a70dee250c89cf",
+    "numerical_policy_note": "v2 initial physical design checked with recorded v3 checkpoint recovery; not relabelled as a completed v2 optimization."
+  },
+  "evidence_archive_sha256": "b011a01a896405ecbdb186c18a336f29778545cc9bff37f695ceed97b5fe4c68",
+  "solver_name": "ADflow",
+  "solver_source_revision": "8155e98119ec138f805a916400837cd27c41b961",
+  "mpi_ranks": 8,
+  "shared_machine": true,
+  "mdo_speedup_verified": false
+}
