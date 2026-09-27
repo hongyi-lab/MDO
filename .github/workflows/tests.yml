@@ -8,7 +8,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -e '.[baseline]'
+      # The upstream force-integral parity test uses BasicWing, which imports
+      # matplotlib even though this check does not generate figures.
+      - run: python -m pip install -e '.[baseline]' 'matplotlib>=3.8,<4'
+      - run: python scripts/bootstrap_upstream.py --only cfdpost
       - run: python -m unittest discover -s tests -v
       - run: python -m mdo_demo smoke --output results/ci_smoke
       - run: for script in scripts/*.sh; do bash -n "$script"; done

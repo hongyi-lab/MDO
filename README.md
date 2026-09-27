@@ -10,7 +10,7 @@
 
 `scripts/run_aerostructural.py --action single|optimize|verify` 使用真实求解器并持有共享计算锁；`scripts/compare_aerostructural.py` 仅在两条路线的最终设计都通过共同 ADflow/TACS 复核后导出对照表。失败 CFD 不能进入优化。
 
-本地开发检查：`python -m pip install -e '.[baseline]'`；真实 TACS/ADflow 仍使用服务器已有官方环境。首轮开发只做搭建验证，通过后才启动新的有界实验，不重复训练。
+本地开发检查的完整安装与测试命令见下方“本地只搭流程”，其中气动力积分对照测试需要固定版本的 `cfdpost`；真实 TACS/ADflow 仍使用服务器已有官方环境。首轮开发只做搭建验证，通过后才启动新的有界实验，不重复训练。
 
 ## 已完成服务器试验：MDO 目标适配
 
@@ -98,7 +98,8 @@ bash scripts/run_demo.sh cuda:0 ATsurf_S
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e '.[baseline]' 'matplotlib>=3.8,<4'
+python scripts/bootstrap_upstream.py --only cfdpost
 python -m unittest discover -s tests -v
 python -m mdo_demo smoke --output results/local_smoke
 ```

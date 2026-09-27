@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check out fixed upstream revisions, preserving any existing user changes."""
 
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -14,9 +15,16 @@ def git(*args, cwd=None):
 def main():
     root = Path(__file__).resolve().parents[1]
     config = json.loads((root/"configs/upstream.lock.json").read_text(encoding="utf-8"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+",
+                        choices=[entry["directory"] for entry in config["repositories"]],
+                        help="Fetch only these locked repositories (default: all)")
+    args = parser.parse_args()
     destination = root/"external"
     destination.mkdir(exist_ok=True)
     for entry in config["repositories"]:
+        if args.only and entry["directory"] not in args.only:
+            continue
         path = destination/entry["directory"]
         if path.exists():
             if not (path/".git").exists():
