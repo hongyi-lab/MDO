@@ -340,7 +340,8 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
         if "target_cl" in request["identity"]["condition"]:
             raise ValueError("Checkpoint initialization currently supports fixed-alpha only")
         opts["restartFile"] = str(checkpoint)
-        if restart_mode == "fixed_seed":
+        if (restart_mode == "fixed_seed" or
+                (restart_mode == "same_case" and restart.get("prior_seed_initialization") is not None)):
             # Fresh AeroProblem/file initialization already has no oldWinf.
             # Explicitly prevent any later in-memory free-stream correction;
             # target farfield BCs still come from the new AeroProblem alpha.

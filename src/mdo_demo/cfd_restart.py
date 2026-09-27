@@ -80,6 +80,11 @@ def _stage_cost(result):
         if elapsed + 1e-8 < total:
             raise ValueError("Refinement stage clock is smaller than solver total")
         scope = "refinement_stage_seconds; checkpoint validation, MPI synchronization, solver setup/solve/output; excludes launcher and final JSON serialization"
+    elif "seed_initialization_stage_seconds" in timing:
+        elapsed = _finite(timing["seed_initialization_stage_seconds"], "seed target stage seconds", positive=True)
+        if elapsed + 1e-8 < total:
+            raise ValueError("Seed target stage clock is smaller than solver total")
+        scope = "seed_initialization_stage_seconds; validation, target initialization, solve and output; shared seed preparation excluded"
     elif "live_mesh_and_cfd_seconds" in timing:
         elapsed = _finite(timing["live_mesh_and_cfd_seconds"], "mesh + CFD stage seconds", positive=True)
         if elapsed + 1e-8 < total:
@@ -110,10 +115,33 @@ def validate_restart_source(source_result_path, bundle_dir, checkpoint_path,
     checkpoint = Path(checkpoint_path).resolve()
     expected_sha = _sha(expected_checkpoint_sha256, "expected checkpoint hash")
     source = read_json(source_path)
-    if source.get("backend") != "adflow" or source.get("status") not in {"ok", "not_converged"}:
-        raise ValueError("Restart source must be a completed ADflow result")
     if source.get("provenance", {}).get("restart") is not None:
         raise ValueError("This bounded adapter allows one checkpoint refinement, not a retry chain")
+    prior_seed = None
+    if source.get("status") == "seed_initialization_unqualified":
+        # A failed NEW target has a different role than the qualified zero-alpha
+        # seed. Reproduce its own-target audit before allowing ONE continuation.
+        from .cfd_seed import audit_seed
+        previous = source.get("provenance", {}).get("seed_initialization", {})
+        ancestor_path = Path(previous["source_result_path"])
+        if sha256_file(ancestor_path) != previous.get("source_result_file_sha256"):
+            raise ValueError("Qualified seed ancestor changed after the target initialization")
+        ancestor = read_json(ancestor_path)
+        reproduced = audit_seed(ancestor, source)
+        if (reproduced != source.get("seed_audit") or reproduced.get("passed") is not True
+                or reproduced.get("accepted") is not False):
+            raise ValueError("Failed seed target audit cannot be reproduced")
+        initial, _, final = _norms(source)
+        conv = source["convergence"]
+        if (conv.get("converged") is not False or final / initial <= TOLERANCE
+                or conv.get("finite_coefficients") is not True
+                or conv.get("finite_solved_alpha") is not True or conv.get("trim_pass") is not True):
+            raise ValueError("Seed continuation requires an actual finite unconverged target")
+        prior_seed = copy.deepcopy(previous)
+    elif source.get("status") not in {"ok", "not_converged"}:
+        raise ValueError("Restart source must be a completed ADflow result")
+    if source.get("backend") != "adflow":
+        raise ValueError("Restart source must be a completed ADflow result")
     if source["convergence"].get("fatal_failed") is not False:
         raise ValueError("A fatal solver failure is not a valid checkpoint source")
     r0, rstart, rfinal = _norms(source)
@@ -151,6 +179,9 @@ def validate_restart_source(source_result_path, bundle_dir, checkpoint_path,
     if sha256_file(mesh) != identity["volume_mesh_sha256"]:
         raise ValueError("Original volume mesh hash mismatch")
     preset = {1e-5: "robust_rans", 1e-7: "robust_rans_late_nk"}.get(options.get("NKSwitchTol"))
+    if prior_seed is not None:
+        # audit_seed above checks the full fixed-seed ANK policy.
+        preset = "robust_rans_ank_polish"
     if preset is None or options.get("equationType") != "RANS" or options.get("turbulenceModel") != "SA":
         raise ValueError("Unsupported source solver physics/preset")
     raw = {"schema_version": 1, "problem_id": identity["problem_id"],
@@ -160,6 +191,8 @@ def validate_restart_source(source_result_path, bundle_dir, checkpoint_path,
                         "max_cycles": source["configured_max_internal_iterations"],
                         "coarse_cycles": options["nCyclesCoarse"]},
            "provenance": copy.deepcopy(source.get("provenance", {}))}
+    if prior_seed is not None:
+        raw["provenance"].pop("seed_initialization", None)
     normalized = validate_request(raw)
     if normalized["identity"] != identity or normalized["case_sha256"] != _volume_hash(source):
         raise ValueError("Reconstructed request does not preserve source physical identity")
@@ -177,6 +210,11 @@ def validate_restart_source(source_result_path, bundle_dir, checkpoint_path,
                   "restart_kind": "same-case volume checkpoint; new solver initialization",
                   "checkpoint_field_content_audit": "required separately; filename/hash association alone does not inspect CGNS fields",
                   "normalization": "getResNorms final/initial; never final/restart-start or injected residual norms"}
+    if prior_seed is not None:
+        provenance.update(prior_seed_initialization=prior_seed,
+                          shared_seed_preparation=copy.deepcopy(prior_seed["shared_seed_preparation"]),
+                          prior_initialization_kind="unqualified fixed-seed target; one same-case continuation",
+                          shared_seed_cost_added_to_source_stage=False)
     normalized["provenance"]["restart"] = copy.deepcopy(provenance)
     return normalized, provenance
 
@@ -230,7 +268,7 @@ def audit_restart(source_result, result):
                 and conv.get("finite_coefficients") is True and conv.get("finite_solved_alpha") is True
                 and conv.get("trim_pass") is True and final / r0 <= TOLERANCE
                 and final / source_r0 <= TOLERANCE)
-    return {"schema": RESTART_SCHEMA, "passed": True, "accepted": accepted,
+    report = {"schema": RESTART_SCHEMA, "passed": True, "accepted": accepted,
             "source_result_content_sha256": canonical_hash(source),
             "checkpoint_sha256": prov["checkpoint_sha256"],
             "freestream_denominator_relative_difference": abs(r0 / source_r0 - 1.),
@@ -248,3 +286,39 @@ def audit_restart(source_result, result):
             "continuation_chain_allocated_rank_hours": source_cost["allocated_rank_hours"] + stage_cost["allocated_rank_hours"],
             "cost_scope": "Measured source stage plus this refinement; neither checkpoint generation nor source solve is free. Earlier independent solver-development attempts and unmeasured process launch costs remain separately reported.",
             "mdo_result": False}
+
+    if source.get("status") == "seed_initialization_unqualified":
+        previous = source.get("provenance", {}).get("seed_initialization")
+        if (prov.get("prior_seed_initialization") != previous
+                or prov.get("shared_seed_preparation") != previous.get("shared_seed_preparation")
+                or "seed_initialization" in result.get("provenance", {})):
+            raise ValueError("Continuation mixed its target restart with the shared seed contract")
+        if options.get("nCycles") != 1200 or result.get("configured_max_internal_iterations") != 1200:
+            raise ValueError("One seed-target continuation is limited to 1200 additional internal iterations")
+        required_options = {"useANKSolver": True, "useNKSolver": False,
+                            "infChangeCorrection": False, "equationType": "RANS",
+                            "turbulenceModel": "SA", "writeVolumeSolution": True,
+                            "solutionPrecision": "double", "MGCycle": "sg",
+                            "ANKSecondOrdSwitchTol": 1e-3, "ANKCoupledSwitchTol": 1e-16,
+                            "nSubiterTurb": 10}
+        for key, expected in required_options.items():
+            actual = options.get(key)
+            if actual != expected or (type(expected) is bool and actual is not expected):
+                raise ValueError(f"Seed-target continuation changed the actual solver policy: {key}")
+        alpha = source["identity"]["condition"].get("alpha_deg")
+        solved = result.get("solved_alpha_deg")
+        if (isinstance(solved, bool) or not isinstance(solved, (int, float))
+                or not math.isfinite(solved) or solved != alpha
+                or source.get("solved_alpha_deg") != alpha):
+            raise ValueError("Continuation actual solved alpha differs from the same target source")
+        counts = [source.get("internal_iterations_last_solve"), result.get("internal_iterations_last_solve")]
+        if any(type(value) is not int or value < 0 for value in counts):
+            raise ValueError("Record actual source and continuation internal iteration counts")
+        report.update(shared_seed_preparation=copy.deepcopy(previous["shared_seed_preparation"]),
+                      shared_seed_cost_added_to_continuation=False,
+                      continuation_source_kind="unqualified fixed-seed target",
+                      target_internal_iterations_prior=counts[0],
+                      target_internal_iterations_this_stage=counts[1],
+                      target_internal_iterations_total=sum(counts),
+                      max_additional_internal_iterations=1200)
+    return report

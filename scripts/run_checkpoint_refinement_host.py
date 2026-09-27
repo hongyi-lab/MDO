@@ -74,6 +74,9 @@ def main():
             state.update(seed_initialization_wall_seconds=elapsed,
                          shared_seed_preparation_seconds=state["source_stage_wall_seconds"],
                          cost_scope="This new-angle process measured independently. Immutable seed preparation is shared once; do not add its cost on every call. No MDO speedup reported.")
+        if state.get("kind") == "seed_target_continuation":
+            state.update(target_chain_wall_seconds=state['source_stage_wall_seconds']+elapsed,
+                         cost_scope="Failed new-angle target process plus this same-target continuation; shared seed preparation is separately recorded, counted once per end-to-end route, never on every call. Earlier independent development remains separate.")
         save()
         (project/state['exit_file']).write_text(str(proc.returncode)+'\n')
         return proc.returncode
