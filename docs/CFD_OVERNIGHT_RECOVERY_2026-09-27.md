@@ -13,6 +13,23 @@ optimization is authorized by this recovery plan.
 This is a commitment to investigate and act, not a guarantee of overnight
 convergence or publication-ready results.
 
+## Shared resources: other designs are running
+
+The user subsequently specified that another agent is using CPU resources for
+other designs. Preserve those jobs. Do not kill, suspend, restart or change
+other tasks, and do not use name-wide `killall`/`pkill` or broad process cleanup.
+If managing one of our own processes becomes necessary, verify the recorded
+PID against its full command, project path and start time before acting; a stale
+PID alone is not sufficient ownership evidence.
+
+Keep the current eight MPI ranks; do not increase core use or alter the active
+job. Before a new computation, inspect shared CPU load, available memory, GPU
+use and this project's lock. This project lock does not reserve the whole
+server. Bound OpenMP/BLAS threads for new jobs to avoid oversubscription. If
+capacity is unavailable, wait instead of terminating another design run. Record
+actual rank/thread counts and any shared contention in timing evidence; changing
+resource allocation must not silently become a claimed algorithmic speedup.
+
 ## Current evidence, not a completed result
 
 The active run is recorded in `manifests/active_aerostructural_run.json` on the
