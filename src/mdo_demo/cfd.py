@@ -310,7 +310,7 @@ def _module_provenance(module: Any) -> dict:
 
 
 def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: dict[str, str] | None = None,
-               restart_file: Path | None = None) -> dict:
+               restart_file: Path | None = None, restart_mode: str = "same_case") -> dict:
     """Collective across MPI ranks. Return nonconverged results for diagnostics only."""
     total_start = time.perf_counter()
     import adflow
@@ -326,13 +326,25 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
     opts = solver_options(request, output_dir)
     if restart_file is not None:
         checkpoint = Path(restart_file).resolve()
-        restart = request.get("provenance", {}).get("restart", {})
+        if restart_mode not in {"same_case", "fixed_seed"}:
+            raise ValueError("Unsupported checkpoint initialization mode")
+        provenance = request.get("provenance", {})
+        key = "restart" if restart_mode == "same_case" else "seed_initialization"
+        other = "seed_initialization" if restart_mode == "same_case" else "restart"
+        if other in provenance:
+            raise ValueError("Same-case restart and cross-angle seed contracts cannot be mixed")
+        restart = provenance.get(key, {})
         if (not checkpoint.is_file() or checkpoint.suffix.lower() != ".cgns"
                 or restart.get("checkpoint_sha256") != sha256_file(checkpoint)):
             raise ValueError("Restart requires a provenance-bound full-volume checkpoint")
         if "target_cl" in request["identity"]["condition"]:
-            raise ValueError("Checkpoint refinement currently supports fixed-alpha only")
+            raise ValueError("Checkpoint initialization currently supports fixed-alpha only")
         opts["restartFile"] = str(checkpoint)
+        if restart_mode == "fixed_seed":
+            # Fresh AeroProblem/file initialization already has no oldWinf.
+            # Explicitly prevent any later in-memory free-stream correction;
+            # target farfield BCs still come from the new AeroProblem alpha.
+            opts["infChangeCorrection"] = False
     identity = request["identity"]
     cond, ref = identity["condition"], identity["reference"]
     solver = ADFLOW(comm=comm, options=opts)

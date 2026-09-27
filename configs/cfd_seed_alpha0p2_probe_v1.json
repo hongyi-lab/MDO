@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "fixed-converged-alpha0-seed-to-alpha0p2-v1",
+  "scope": "One new-angle initialization diagnostic before restoring the common aero-structural optimization queue",
+  "nominal_target_alpha_deg": 0.2,
+  "stored_target_alpha_deg": 0.20000000298023224,
+  "target_case_sha256": "f8bc0259308cc72836467191c06916fb9446be43ad9aa73f0d19771bc4f5c68c",
+  "source_case_sha256": "0b95c2ee17c8e35d50b3792e5c049fcc3537195f57014ba946e9fc8f816fbc6f",
+  "source_checkpoint_sha256": "a9f054f11a90672888caabd8ac1904ff7aba075461a12aefbdf70feedf016bc3",
+  "volume_mesh_sha256": "3785e33042e68d992fcea36752ae5b408f2ad8fc2370c69e987a3666905611d3",
+  "source_result": "Converged checkpoint_ank_v3_20260927T184659Z, exact result and parent hashes independently checked at runtime",
+  "allowed_physical_change": "alpha_deg only",
+  "solver": {
+    "preset": "robust_rans_ank_polish",
+    "max_cycles": 1200,
+    "l2_convergence": 1e-10,
+    "mpi_ranks": 8,
+    "threads_per_rank": 1,
+    "infChangeCorrection": false,
+    "fresh_process_and_aeroproblem": true,
+    "residual_denominator": "Independent target-case uniform-freestream residual; never seed R0 or loaded-state residual"
+  },
+  "shared_seed_preparation_process_seconds": 9652.238474201411,
+  "cost_accounting": "Shared preparation is a separate ledger counted once per end-to-end route, not on every aerodynamic call; all new-angle process and checking costs measured independently",
+  "automatic_retry": false,
+  "automatic_full_mdo_launch": false,
+  "new_training": false
+}

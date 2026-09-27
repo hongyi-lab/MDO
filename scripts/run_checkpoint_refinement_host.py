@@ -49,6 +49,11 @@ def main():
                    '--source-result',inside(state['source_result']), '--request',inside(state['request']),
                    '--checkpoint',inside(state['checkpoint']), '--checkpoint-sha256',state['checkpoint_sha256'],
                    '--grid-audit',inside(state['grid_audit']), '--output',inside(state['output'])]
+        seeded = state.get("kind") == "fixed_seed_initialization"
+        if seeded:
+            command[4] = "scripts/run_seed_initialization.py"
+            command += ["--source-request", inside(state["source_request"]),
+                        "--seed-cost-manifest", inside(state["seed_cost_manifest"])]
         command_text = 'source "$BASHRC_MDOLAB"; exec '+shlex.join(command)
         rootless = [sys.executable,str(project/'code/MDO/scripts/run_cfd_rootless.py'),
                     '--project',str(project),'--','/bin/bash','-c',command_text]
@@ -64,6 +69,11 @@ def main():
                      finished_utc=datetime.now(timezone.utc).isoformat(),wall_seconds=elapsed,
                      source_plus_refinement_wall_seconds=state['source_stage_wall_seconds']+elapsed,
                      cost_scope='Source failed optimization stage plus complete refinement process; earlier independent failures and code development are additional disclosed development costs')
+        if seeded:
+            state.pop("source_plus_refinement_wall_seconds", None)
+            state.update(seed_initialization_wall_seconds=elapsed,
+                         shared_seed_preparation_seconds=state["source_stage_wall_seconds"],
+                         cost_scope="This new-angle process measured independently. Immutable seed preparation is shared once; do not add its cost on every call. No MDO speedup reported.")
         save()
         (project/state['exit_file']).write_text(str(proc.returncode)+'\n')
         return proc.returncode
