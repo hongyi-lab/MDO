@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import time
 import traceback
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,8 @@ def main() -> int:
     run.add_argument("--request", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--wall-normal-layers", type=int, default=81)
+    run.add_argument("--solver-preset", choices=("aerotransformer", "robust_rans"), default="aerotransformer",
+                     help="Numerical solver strategy; neither changes the physical case nor loosens the convergence criterion")
     run.add_argument("--reuse-mesh-result", type=Path, help="Reuse a hash-verified positive mesh from a previous result with unchanged native surface and mesh settings")
     compare = sub.add_parser("compare", help="Diagnostic pair, not an equal-accuracy speedup claim")
     compare.add_argument("--prediction", type=Path, required=True)
@@ -47,7 +50,9 @@ def main() -> int:
     elif args.action == "predict":
         import numpy as np
         from mdo_demo.aerotransformer import AeroTransformerPredictor
+        prepare_start = time.perf_counter()
         sample, manifest = prediction_sample(args.request)
+        native_input_preparation_seconds = time.perf_counter() - prepare_start
         if args.output.exists():
             raise ValueError("Prediction output already exists; choose a fresh filename")
         model = AeroTransformerPredictor(args.checkpoint, args.device)
@@ -57,13 +62,19 @@ def main() -> int:
         if fields.exists():
             raise ValueError("Prediction field output already exists")
         fields.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(fields, fields=prediction["fields"], geometry=sample["geometry"],
-                            original_geometry=sample["original_geometry"])
+        arrays = {key: sample[key] for key in ("geometry", "original_geometry", "condition",
+                  "native_geometry", "native_original_geometry", "native_condition") if key in sample}
+        np.savez_compressed(fields, fields=prediction["fields"], **arrays)
         write_json(args.output, {"schema_version": 1, "case_sha256": manifest["case_sha256"],
                                  "coefficients": prediction["coefficients"], "timing": prediction["timings"],
                                  "model_load_seconds": model.load_seconds, "warmup_passes": 1,
+                                 "native_input_preparation_seconds": native_input_preparation_seconds,
+                                 "frame_contract": manifest.get("frame_contract"),
+                                 "sampling_contract": manifest.get("sampling_contract"),
+                                 "fm_validation_status": manifest.get("fm_validation_status"),
                                  "warmup_seconds": warmup["timings"]["total_seconds"],
                                  "coefficient_contract": "FM main-wing surface integral; excludes tip and blunt trailing edge",
+                                 "timing_scope": "Prediction on cached transformed native tensor plus field integration; bundle IO/frame conversion measured separately. Model loading and output writing excluded.",
                                  "calibration_status": manifest["calibration_status"],
                                  "provenance": prediction["provenance"], "fields_file": str(fields),
                                  "equal_accuracy_verified": False, "matched_speedup_eligible": False})
@@ -73,7 +84,7 @@ def main() -> int:
         comm = MPI.COMM_WORLD
         try:
             result = run_bundle(args.request, args.output, comm=comm, wall_normal_layers=args.wall_normal_layers,
-                                reuse_mesh_result=args.reuse_mesh_result)
+                                reuse_mesh_result=args.reuse_mesh_result, solver_preset=args.solver_preset)
             if comm.rank == 0:
                 print(f"CFD status={result['status']}; {args.output / 'result.json'}", flush=True)
             return 0 if result["status"] == "ok" else 2

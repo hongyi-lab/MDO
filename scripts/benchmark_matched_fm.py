@@ -30,7 +30,9 @@ def main():
     array_path=args.output.with_suffix(".npz")
     if args.output.exists() or array_path.exists():
         raise ValueError("Choose new output paths to preserve prior evidence")
+    prepare_start=time.perf_counter()
     sample,bundle=prediction_sample(args.request)
+    native_input_preparation_seconds=time.perf_counter()-prepare_start
     import torch
     torch.set_num_threads(4)
     torch.backends.cuda.matmul.allow_tf32=False
@@ -49,8 +51,9 @@ def main():
         elapsed.append(time.perf_counter()-started)
         times.append(prediction["timings"])
     args.output.parent.mkdir(parents=True,exist_ok=True)
-    np.savez_compressed(array_path,fields=prediction["fields"],geometry=sample["geometry"],
-                        original_geometry=sample["original_geometry"])
+    arrays={key:sample[key] for key in ("geometry","original_geometry","condition",
+            "native_geometry","native_original_geometry","native_condition") if key in sample}
+    np.savez_compressed(array_path,fields=prediction["fields"],**arrays)
     result={"schema_version":1,"case_sha256":bundle["case_sha256"],
             "coefficients":prediction["coefficients"],
             "timing":{key:float(np.median([row[key] for row in times])) for key in times[0]},
@@ -58,13 +61,17 @@ def main():
             "median_prediction_wall_s":float(np.median(elapsed)),
             "p95_prediction_wall_s":float(np.percentile(elapsed,95)),
             "model_load_seconds":model.load_seconds,"warmup_passes":args.warmup,
+            "native_input_preparation_seconds":native_input_preparation_seconds,
+            "frame_contract":bundle.get("frame_contract"),
+            "sampling_contract":bundle.get("sampling_contract"),
+            "fm_validation_status":bundle.get("fm_validation_status"),
             "warmup_seconds":warmup,"timed_repeats":args.repeats,
-            "timing_scope":"Batch-one input preparation, synchronized model, CPU fields and coefficient integration; loading and disk output excluded and logged separately",
+            "timing_scope":"Batch-one cached transformed tensor preparation, synchronized model, CPU fields and coefficient integration; native bundle IO/frame conversion, model loading and disk output excluded. Preparation and model loading logged separately.",
             "coefficient_contract":"FM main-wing surface integral; excludes tip and blunt trailing edge",
             "calibration_status":bundle["calibration_status"],"provenance":prediction["provenance"],
             "fields_file":str(array_path),"equal_accuracy_verified":False,"matched_speedup_eligible":False}
     write_json(args.output,result)
-    print(f"Exact-case FM median {result['median_prediction_wall_s']:.6f}s; {args.output}; accuracy not yet verified")
+    print(f"Native-case FM median {result['median_prediction_wall_s']:.6f}s; {args.output}; sampling/accuracy not yet verified")
 
 
 if __name__=="__main__":

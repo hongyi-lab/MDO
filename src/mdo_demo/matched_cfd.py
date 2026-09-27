@@ -1,8 +1,9 @@
 """A shared-geometry FM / ADflow bridge, with explicit reconstruction boundaries.
 
 The native CFD mesh includes a blunt trailing edge and a rounded tip. Released
-CRMpert ML arrays do not contain those patches, so this module never pretends
-that meshing ``origingeom.npy`` reproduces the released CFD experiment.
+CRMpert ML arrays use a closed trailing-edge ring and truncated span, while our
+explicit native sampler currently retains an open main-wing ring. This module
+records that unresolved sampling contract rather than claiming reproduction.
 """
 from __future__ import annotations
 
@@ -28,6 +29,11 @@ CST_REVISION = "9500b19a732463c26b32f6860ac6c517c7d212a5"
 ADFLOW_SURFACE_SOURCE_SHA256 = "786a0c8eb35fc61f4131e60ae3a9f4bcf185caab4f21bdb1c69c8a52bad4836a"
 CONTROL_POINTS = [0.09999976658796647, 0.23391927215290928, 0.36783877771785206,
                   0.5258790832883891, 0.683919388858926, 0.841959694429463, 1.0]
+NATIVE_INPUT_FRAME = "native_cfd_mirrored_span_v1"
+MODEL_INPUT_FRAME = "aerotransformer_root_twist_removed_v1"
+FRAME_TRANSFORM_VERSION = "native_to_aerotransformer_rotation_v1"
+BASELINE_TWIST_DEGREES = 6.7166
+NATIVE_SAMPLING_METHOD = "linear native-surface interpolation; cosine-clustered arc coordinate on each foil side"
 
 
 def canonical_hash(data: dict) -> str:
@@ -140,7 +146,7 @@ def reference_from_native_blocks(blocks: list[np.ndarray]) -> tuple[np.ndarray, 
         for k in range(3):
             target[:, i, k] = np.interp(target_span, span, sampled[:, i, k])
     return target.transpose(2, 0, 1), {
-        "method": "linear native-surface interpolation; cosine-clustered arc coordinate on each foil side",
+        "method": NATIVE_SAMPLING_METHOD,
         "source": "first 8 native patches, excluding trailing-edge patches 4/8 and rounded-tip patches 9-13",
         "span_mirroring": "CFD z<0 becomes FM z>0; pressure unchanged, spanwise vector component reverses",
         "native_main_vertices": list(main.shape), "fm_vertex_shape": [3, 129, 257],
@@ -177,6 +183,7 @@ def prepare_bundle(input_path: Path, output: Path, upstream: Path, *, allow_reco
     write_json(output / "native_input.json", definition)
     identity = {"case_name": definition["case_name"], "native_input_sha256": sha256_file(output / "native_input.json"),
                 "surface_sha256": sha256_file(output / "wing.xyz"), "fm_input_sha256": sha256_file(output / "fm_input.npz"),
+                "fm_input_frame": NATIVE_INPUT_FRAME,
                 "condition": {"mach": float(condition[1]), "alpha_deg": float(condition[0]), "reynolds": 20_000_000.,
                               "reynolds_length_m": 1., "temperature_k": 300.},
                 "reference": {"area_m2": float(geometry["surface_area"]), "chord_m": 1., "moment_center_m": [.25, 0., 0.]},
@@ -208,11 +215,116 @@ def load_bundle(request_path: Path) -> dict:
     return manifest
 
 
+def native_to_model_sample(sample: dict, *, input_frame: str, native_reference: dict) -> dict:
+    """Copy native mirrored-span arrays into the author's model coordinate frame.
+
+    This function is exclusive to native bundles. Released preprocessed dataset
+    arrays must not be passed here. It leaves the physical CFD case unchanged:
+    both x/y geometry and free-stream angle rotate by +6.7166 degrees.
+    """
+    if input_frame != NATIVE_INPUT_FRAME or "frame_contract" in sample:
+        raise ValueError("Expected an untransformed native bundle; reject unknown or already transformed frames")
+    original = np.array(sample["original_geometry"], dtype=np.float64, copy=True)
+    geometry = np.array(sample["geometry"], dtype=np.float64, copy=True)
+    condition = np.array(sample["condition"], dtype=np.float64, copy=True)
+    if (original.shape != (3, 129, 257) or geometry.shape != (3, 128, 256)
+            or condition.shape != (2,) or not all(np.isfinite(a).all() for a in (original, geometry, condition))
+            or condition[1] <= 0):
+        raise ValueError("Native input requires finite vertex/center geometry and [AoA,Mach] with positive Mach")
+    centers = .25 * (original[:, 1:, 1:] + original[:, 1:, :-1]
+                      + original[:, :-1, 1:] + original[:, :-1, :-1])
+    if not np.allclose(centers, geometry, rtol=1e-6, atol=1e-7):
+        raise ValueError("Native center geometry does not match the vertex surface")
+    area = float(sample["ref_area"])
+    if not math.isfinite(area) or area <= 0 or area != float(native_reference["area_m2"]):
+        raise ValueError("Reference area must be positive and agree with the native CFD contract")
+    moment_center = np.asarray(native_reference["moment_center_m"], dtype=float)
+    if moment_center.shape != (3,) or not np.isfinite(moment_center).all():
+        raise ValueError("A finite native moment reference is required")
+    radians = math.radians(BASELINE_TWIST_DEGREES)
+    rotation = np.array([[math.cos(radians), -math.sin(radians), 0.],
+                         [math.sin(radians), math.cos(radians), 0.], [0., 0., 1.]])
+    model_original = np.einsum("ab,bij->aij", rotation, original)
+    model_centers = .25 * (model_original[:, 1:, 1:] + model_original[:, 1:, :-1]
+                           + model_original[:, :-1, 1:] + model_original[:, :-1, :-1])
+    model_condition = condition.copy()
+    model_condition[0] += BASELINE_TWIST_DEGREES
+    result = {"original_geometry": model_original, "geometry": model_centers.astype(np.float32),
+              "condition": model_condition.astype(np.float32), "ref_area": area,
+              "native_original_geometry": original, "native_geometry": geometry.astype(np.float32),
+              "native_condition": condition.copy()}
+    input_digest = hashlib.sha256()
+    for name in ("original_geometry", "geometry", "condition"):
+        array = np.ascontiguousarray(result[name])
+        input_digest.update(name.encode())
+        input_digest.update(str(array.dtype).encode())
+        input_digest.update(json.dumps(list(array.shape)).encode())
+        input_digest.update(array.tobytes())
+    result["frame_contract"] = {
+        "version": FRAME_TRANSFORM_VERSION, "verified": True,
+        "source_frame": NATIVE_INPUT_FRAME, "target_frame": MODEL_INPUT_FRAME,
+        "rotation_degrees": BASELINE_TWIST_DEGREES,
+        "rotation_origin_m": [0., 0., 0.], "rotation_matrix_native_to_model": rotation.tolist(),
+        "native_condition": {"alpha_deg": float(condition[0]), "mach": float(condition[1])},
+        "model_condition": {"alpha_deg": float(result["condition"][0]), "mach": float(result["condition"][1])},
+        "model_input_sha256": input_digest.hexdigest(),
+        "native_moment_center_m": moment_center.tolist(),
+        "equivalent_model_moment_center_m": (rotation @ moment_center).tolist(),
+        "CM_comparable": False,
+        "moment_note": "BasicWing still integrates about (0.25,0,0) in the model frame; CM is diagnostic only, not the native-point moment.",
+        "native_geometry_note": "Saved native_* arrays retain mirrored positive span; solver coordinates are obtained by negating z.",
+        "physics_changed": False,
+        "verification_scope": "Deterministic author coordinate transform; not a model accuracy, sampling or calibration certificate.",
+        "source": "floGen flowvae/post.py:508-533 and flowvae/app/wing/api.py:627-635",
+        "source_revision": "ff3abda23e10e1073c07ffd78dad96979e940c77",
+    }
+    return result
+
+
 def prediction_sample(request_path: Path) -> tuple[dict, dict]:
+    """Load an unchanged native bundle and return transformed prediction copies.
+
+    The bundle/case hash continues to identify the same native CFD run. The
+    separate model-input hash and versioned frame contract identify this new
+    representation, including when an existing legacy bundle is reused.
+    """
     manifest = load_bundle(request_path)
+    identity = manifest["identity"]
+    sampling = identity["surface_sampling"]
+    input_frame = identity.get("fm_input_frame")
+    legacy = input_frame is None
+    if legacy:
+        if (identity.get("recipe_revision") != AEROTRANSFORMER_REVISION
+                or sampling.get("method") != NATIVE_SAMPLING_METHOD):
+            raise ValueError("Legacy bundle input frame cannot be inferred from an unknown native sampling recipe")
+        input_frame = NATIVE_INPUT_FRAME
     with np.load(request_path.resolve().parent / manifest["fm_input_path"], allow_pickle=False) as arrays:
-        sample = {k: np.array(arrays[k], copy=True) for k in ("original_geometry", "geometry", "condition")}
-        sample["ref_area"] = float(arrays["ref_area"])
+        raw = {k: np.array(arrays[k], copy=True) for k in ("original_geometry", "geometry", "condition")}
+        raw["ref_area"] = float(arrays["ref_area"])
+    declared_condition = identity["condition"]
+    if not np.array_equal(raw["condition"], np.asarray(
+            [declared_condition["alpha_deg"], declared_condition["mach"]], dtype=raw["condition"].dtype)):
+        raise ValueError("Native FM arrays and CFD condition identity differ")
+    sample = native_to_model_sample(raw, input_frame=input_frame, native_reference=identity["reference"])
+    sample["frame_contract"].update(
+        source_bundle_case_sha256=manifest["case_sha256"],
+        source_fm_input_sha256=identity["fm_input_sha256"],
+        legacy_native_frame_identified_from_pinned_recipe=legacy)
+    sample["sampling_contract"] = {
+        "version": "native_open_mainwing_arc_sampling_v1", "verified": False,
+        "physical_surface_family": "mainwing", "native_patches": [1, 2, 3, 5, 6, 7],
+        "sampling_parameters_changed": False, "source_sampling": copy.deepcopy(sampling),
+        "missing_contract": [
+            "Published closed trailing-edge ring and exact chordwise positions are not reproduced.",
+            "Published tip-span truncation rule is not reproduced.",
+            "Conservative transfer of native CFD pressure/friction to the reference surface is not verified.",
+        ],
+        "scope": "Same explicit native main-wing physical subset; model sampling remains different from its published training representation.",
+        "accuracy_eligible": False, "matched_speedup_eligible": False,
+    }
+    manifest["frame_contract"] = copy.deepcopy(sample["frame_contract"])
+    manifest["sampling_contract"] = copy.deepcopy(sample["sampling_contract"])
+    manifest["fm_validation_status"] = "frame_aligned_sampling_unverified"
     return sample, manifest
 
 
@@ -285,7 +397,7 @@ def reusable_mesh(manifest: dict, source_result: Path, options: dict) -> tuple[P
 
 
 def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layers: int = 81,
-               reuse_mesh_result: Path | None = None) -> dict:
+               reuse_mesh_result: Path | None = None, solver_preset: str = "aerotransformer") -> dict:
     """Collective pyHyp + ADflow execution on Linux, with no stale result reuse."""
     from mpi4py import MPI
     comm = MPI.COMM_WORLD if comm is None else comm
@@ -335,7 +447,7 @@ def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layer
     raw = {"schema_version": 1, "problem_id": "new-matched-wing-cfd-v1", "geometry_id": manifest["identity"]["case_name"],
            "geometry_sha256": manifest["identity"]["surface_sha256"], "mesh_path": str(volume),
            "condition": manifest["identity"]["condition"], "reference": manifest["identity"]["reference"],
-           "numerics": {"preset": "aerotransformer"},
+           "numerics": {"preset": solver_preset, "l2_convergence": 1e-10, "max_cycles": 3000},
            "provenance": {"bundle_case_sha256": manifest["case_sha256"], "bundle_identity": manifest["identity"]}}
     normalized = validate_request(raw)
     if reuse is not None and normalized["identity"]["volume_mesh_sha256"] != reuse["volume_mesh_sha256"]:
@@ -373,11 +485,18 @@ def paired_diagnostics(prediction: dict, cfd: dict) -> dict:
         raise ValueError("FM and CFD case hashes differ")
     if cfd.get("status") != "ok" or not cfd.get("convergence", {}).get("converged"):
         raise ValueError("Nonconverged CFD cannot be used as reference")
-    for record in (prediction, cfd):
-        if "unaligned" in str(record.get("fm_validation_status", "")):
-            raise ValueError("FM/CFD frame or sampling contract is explicitly unaligned; accuracy comparison is blocked")
     frame = prediction.get("frame_contract", {})
     sampling = prediction.get("sampling_contract", {})
+    versioned_frame = (isinstance(frame, dict) and frame.get("verified") is True
+                       and frame.get("version") == FRAME_TRANSFORM_VERSION
+                       and frame.get("source_bundle_case_sha256") == prediction["case_sha256"])
+    if "unaligned" in str(prediction.get("fm_validation_status", "")):
+        raise ValueError("FM frame is explicitly unaligned; rerun prediction with the versioned native-to-model transform")
+    if "unaligned" in str(cfd.get("fm_validation_status", "")) and not versioned_frame:
+        raise ValueError("FM/CFD frame or sampling contract is explicitly unaligned; a verified new prediction is required")
+    # An old CFD record's banner described the then-unfixed FM adapter. A new
+    # versioned prediction may reuse that unchanged physical CFD result, but
+    # unresolved sampling still prevents reporting qualified accuracy/speedup.
     contract_verified = (isinstance(frame, dict) and frame.get("verified") is True
                          and isinstance(sampling, dict) and sampling.get("verified") is True
                          and cfd.get("fm_validation_status") == "aligned_verified")
@@ -395,8 +514,11 @@ def paired_diagnostics(prediction: dict, cfd: dict) -> dict:
             "coefficient_absolute_difference": errors if contract_verified else None,
             "unverified_coefficient_difference": None if contract_verified else errors,
             "coordinate_sampling_contract_verified": contract_verified, "accuracy_eligible": False,
+            "frame_alignment_verified": versioned_frame or contract_verified,
+            "frame_contract": frame, "sampling_contract": sampling,
+            "historical_cfd_fm_validation_status": cfd.get("fm_validation_status"),
             "interpretation": ("Verified frame/sampling contract; discrete integration differences remain, so not model-only error."
-                               if contract_verified else "Frame/sampling contract is unknown or unverified. Numerical differences are diagnostic only and cannot be interpreted as prediction accuracy."),
+                               if contract_verified else "Sampling remains unverified even if the coordinate frame is corrected. Numerical differences are diagnostic only and cannot be interpreted as qualified prediction accuracy."),
             "cfd_mainwing_coefficients": truth, "cfd_total_wall_coefficients": cfd["coefficients"],
             "CM_diagnostic_only": {"fm": prediction["coefficients"].get("CM"), "cfd": truth.get("CM"),
                                    "reason": "FM upstream moment convention is unresolved; excluded from primary error metrics."},

@@ -91,10 +91,10 @@ def validate_request(raw: dict, base_dir: Path = Path(".")) -> dict:
     _keys(supplied, set(), {"preset", "l2_convergence", "max_cycles", "coarse_cycles",
                            "trim_tolerance", "trim_max_iterations"}, "numerics")
     preset = supplied.get("preset", "aerotransformer")
-    if preset not in {"aerotransformer", "tutorial"}:
-        raise ValueError("numerics.preset must be aerotransformer or tutorial")
-    numerics = {"preset": preset, "l2_convergence": 1e-10 if preset == "aerotransformer" else 1e-6,
-                "max_cycles": 3000 if preset == "aerotransformer" else 1000,
+    if preset not in {"aerotransformer", "tutorial", "robust_rans"}:
+        raise ValueError("numerics.preset must be aerotransformer, tutorial or robust_rans")
+    numerics = {"preset": preset, "l2_convergence": 1e-6 if preset == "tutorial" else 1e-10,
+                "max_cycles": 1000 if preset == "tutorial" else 3000,
                 "coarse_cycles": 500, "trim_tolerance": 1e-4, "trim_max_iterations": 20}
     numerics.update(supplied)
     for key in ("l2_convergence", "trim_tolerance"):
@@ -125,6 +125,13 @@ def solver_options(request: dict, output_dir: Path) -> dict:
                "nCycles": n["max_cycles"], "nCyclesCoarse": n["coarse_cycles"]}
     if n["preset"] == "aerotransformer":
         options.update(MGCycle="3w", useNKSolver=False, NKSwitchTol=1e-8)
+    elif n["preset"] == "robust_rans":
+        # Pinned ADflow doc/solvers.rst: implicit single-grid startup, additional
+        # DADI turbulence subiterations, exact Jacobian after 3 orders, and NK
+        # for final convergence. Changes the solution algorithm, not RANS/SA,
+        # the residual criterion, or the maximum internal-iteration budget.
+        options.update(MGCycle="sg", nSubiterTurb=10, ANKSecondOrdSwitchTol=1e-3,
+                       useNKSolver=True, NKSwitchTol=1e-5)
     else:
         options.update(MGCycle="sg", nSubiterTurb=10, useNKSolver=True, NKSwitchTol=1e-4)
     return options

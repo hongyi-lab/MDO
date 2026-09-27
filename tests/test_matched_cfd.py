@@ -5,8 +5,13 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from mdo_demo.io import sha256_file, write_json
-from mdo_demo.matched_cfd import canonical_hash, load_bundle, mesh_options, mesh_quality_from_root, paired_diagnostics, reference_from_native_blocks, reusable_mesh, validate_native_input
+from mdo_demo.io import read_json, sha256_file, write_json
+from mdo_demo.matched_cfd import (AEROTRANSFORMER_REVISION, BASELINE_TWIST_DEGREES,
+                                 FRAME_TRANSFORM_VERSION, MODEL_INPUT_FRAME,
+                                 NATIVE_INPUT_FRAME, NATIVE_SAMPLING_METHOD,
+                                 canonical_hash, load_bundle, mesh_options, mesh_quality_from_root,
+                                 native_to_model_sample, paired_diagnostics, prediction_sample,
+                                 reference_from_native_blocks, reusable_mesh, validate_native_input)
 
 
 def native_input():
@@ -15,7 +20,103 @@ def native_input():
                          "DAz": [0.] * 8, "cst_u": [[.1] * 10] * 7, "cst_l": [[-.1] * 10] * 7}}
 
 
+def native_frame_sample():
+    angle = np.linspace(0, 2*np.pi, 257)
+    points = np.empty((3, 129, 257))
+    points[0] = .5 + .5*np.cos(angle)
+    points[1] = -.08*np.sin(angle)
+    points[2] = np.linspace(.3, 3., 129)[:, None]
+    centers = .25 * (points[:, 1:, 1:] + points[:, 1:, :-1]
+                      + points[:, :-1, 1:] + points[:, :-1, :-1])
+    return {"original_geometry": points, "geometry": centers.astype(np.float32),
+            "condition": np.array([2., .8], dtype=np.float32), "ref_area": 1.5}
+
+
 class MatchedCFDTests(unittest.TestCase):
+    def test_native_joint_rotation_copies_input_and_preserves_wind_axis_forces(self):
+        source = native_frame_sample()
+        before = {key: value.copy() for key, value in source.items() if isinstance(value, np.ndarray)}
+        result = native_to_model_sample(source, input_frame=NATIVE_INPUT_FRAME,
+                                       native_reference={"area_m2": 1.5, "moment_center_m": [.25, 0, 0]})
+        self.assertAlmostEqual(float(result["condition"][0]), 8.7166, places=5)
+        self.assertEqual(float(result["condition"][1]), float(source["condition"][1]))
+        frame = result["frame_contract"]
+        rotation = np.asarray(frame["rotation_matrix_native_to_model"])
+        np.testing.assert_allclose(np.einsum("ab,bij->aij", rotation.T, result["original_geometry"]),
+                                   source["original_geometry"], rtol=1e-12, atol=1e-12)
+        force = np.array([.03, .5, .08])
+        def wind_axes(vector, alpha):
+            a = np.radians(alpha)
+            return np.array([np.cos(a)*vector[0]+np.sin(a)*vector[1],
+                             -np.sin(a)*vector[0]+np.cos(a)*vector[1]])
+        np.testing.assert_allclose(wind_axes(force, 2.),
+                                   wind_axes(rotation @ force, 2. + BASELINE_TWIST_DEGREES), atol=1e-14)
+        np.testing.assert_allclose(frame["equivalent_model_moment_center_m"], rotation @ [.25, 0, 0])
+        self.assertFalse(frame["CM_comparable"])
+        self.assertFalse(frame["physics_changed"])
+        self.assertEqual(frame["version"], FRAME_TRANSFORM_VERSION)
+        for key, array in before.items():
+            np.testing.assert_array_equal(source[key], array)
+        np.testing.assert_array_equal(result["native_geometry"], source["geometry"])
+
+    def test_native_rotation_does_not_reinterpret_671_as_model_671(self):
+        source = native_frame_sample()
+        source["condition"][0] = 6.71
+        result = native_to_model_sample(source, input_frame=NATIVE_INPUT_FRAME,
+                                       native_reference={"area_m2": 1.5, "moment_center_m": [.25, 0, 0]})
+        self.assertAlmostEqual(float(result["condition"][0]), 13.4266, places=5)
+
+    def test_released_unknown_and_double_transformed_inputs_are_rejected(self):
+        source = native_frame_sample()
+        reference = {"area_m2": 1.5, "moment_center_m": [.25, 0, 0]}
+        for wrong_frame in (MODEL_INPUT_FRAME, "released_CRMpert", "unknown"):
+            with self.assertRaisesRegex(ValueError, "unknown or already transformed"):
+                native_to_model_sample(source, input_frame=wrong_frame, native_reference=reference)
+        result = native_to_model_sample(source, input_frame=NATIVE_INPUT_FRAME, native_reference=reference)
+        with self.assertRaisesRegex(ValueError, "already transformed"):
+            native_to_model_sample(result, input_frame=NATIVE_INPUT_FRAME, native_reference=reference)
+        source["geometry"][0, 0, 0] += .1
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            native_to_model_sample(source, input_frame=NATIVE_INPUT_FRAME, native_reference=reference)
+
+    def test_prediction_time_transform_keeps_legacy_cfd_bundle_hash_and_files_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = native_frame_sample()
+            np.savez(root / "fm_input.npz", **raw)
+            (root / "wing.xyz").write_bytes(b"fixture only, not a physical mesh")
+            write_json(root / "native_input.json", native_input())
+            identity = {"surface_sha256": sha256_file(root / "wing.xyz"),
+                        "fm_input_sha256": sha256_file(root / "fm_input.npz"),
+                        "native_input_sha256": sha256_file(root / "native_input.json"),
+                        "condition": {"alpha_deg": 2., "mach": float(raw["condition"][1])},
+                        "reference": {"area_m2": 1.5, "moment_center_m": [.25, 0, 0]},
+                        "surface_sampling": {"method": NATIVE_SAMPLING_METHOD},
+                        "recipe_revision": AEROTRANSFORMER_REVISION}
+            request = {"schema_version": 1, "case_sha256": canonical_hash(identity), "identity": identity,
+                       "fm_input_path": "fm_input.npz", "surface_path": "wing.xyz",
+                       "native_input_path": "native_input.json"}
+            path = root / "request.json"
+            write_json(path, request)
+            before = {item.name: sha256_file(item) for item in root.iterdir()}
+            sample, manifest = prediction_sample(path)
+            self.assertEqual(manifest["case_sha256"], request["case_sha256"])
+            self.assertEqual(read_json(path), request)
+            self.assertEqual(before, {item.name: sha256_file(item) for item in root.iterdir()})
+            self.assertTrue(sample["frame_contract"]["verified"])
+            self.assertTrue(sample["frame_contract"]["legacy_native_frame_identified_from_pinned_recipe"])
+            self.assertFalse(sample["sampling_contract"]["verified"])
+            self.assertFalse(sample["sampling_contract"]["accuracy_eligible"])
+            self.assertEqual(manifest["fm_validation_status"], "frame_aligned_sampling_unverified")
+            self.assertAlmostEqual(float(sample["condition"][0]), 8.7166, places=5)
+            self.assertEqual(float(sample["native_condition"][0]), 2.)
+            # Self-consistent outer hashes do not excuse a physical condition mismatch.
+            request["identity"]["condition"]["alpha_deg"] = 4.
+            request["case_sha256"] = canonical_hash(request["identity"])
+            write_json(path, request)
+            with self.assertRaisesRegex(ValueError, "condition identity differ"):
+                prediction_sample(path)
+
     def test_mesh_reuse_requires_same_geometry_and_settings_even_if_flow_failed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -163,6 +264,28 @@ class MatchedCFDTests(unittest.TestCase):
         cfd["case_sha256"] = "a"
         cfd["convergence"]["converged"] = False
         with self.assertRaisesRegex(ValueError, "Nonconverged"):
+            paired_diagnostics(prediction, cfd)
+
+    def test_new_frame_prediction_reuses_cfd_but_never_certifies_unknown_sampling(self):
+        prediction = {"case_sha256": "same-physical-case", "coefficients": {"CL": .5, "CD": .03},
+                      "timing": {}, "fm_validation_status": "frame_aligned_sampling_unverified",
+                      "frame_contract": {"verified": True, "version": FRAME_TRANSFORM_VERSION,
+                                         "source_bundle_case_sha256": "same-physical-case"},
+                      "sampling_contract": {"verified": False, "physical_surface_family": "mainwing"}}
+        cfd = {"case_sha256": "same-physical-case", "status": "ok", "convergence": {"converged": True},
+               "coefficients": {"CL": .52, "CD": .033}, "timing": {},
+               "group_coefficients": {"mainwing": {"CL": .51, "CD": .031}},
+               "fm_validation_status": "native_to_model_frame_and_sampling_unaligned"}
+        result = paired_diagnostics(prediction, cfd)
+        self.assertTrue(result["frame_alignment_verified"])
+        self.assertFalse(result["coordinate_sampling_contract_verified"])
+        self.assertFalse(result["accuracy_eligible"])
+        self.assertFalse(result["matched_speedup_eligible"])
+        self.assertIsNone(result["speedup"])
+        self.assertIsNone(result["coefficient_absolute_difference"])
+        self.assertAlmostEqual(result["unverified_coefficient_difference"]["CL"], .01)
+        prediction["frame_contract"]["source_bundle_case_sha256"] = "different"
+        with self.assertRaisesRegex(ValueError, "verified new prediction"):
             paired_diagnostics(prediction, cfd)
 
 

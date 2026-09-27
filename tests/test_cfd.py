@@ -164,6 +164,27 @@ class CFDContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown"):
             self.validate()
 
+    def test_robust_rans_changes_algorithm_without_relaxing_physics_or_budget(self):
+        baseline = self.validate()
+        self.request["numerics"] = {"preset": "robust_rans"}
+        robust = self.validate()
+        self.assertEqual(robust["identity"], baseline["identity"])
+        self.assertEqual(robust["case_sha256"], baseline["case_sha256"])
+        opts = solver_options(robust, self.directory)
+        self.assertEqual(opts["equationType"], "RANS")
+        self.assertEqual(opts["turbulenceModel"], "SA")
+        self.assertEqual(opts["L2Convergence"], 1e-10)
+        self.assertEqual(opts["nCycles"], 3000)
+        self.assertEqual(opts["MGCycle"], "sg")
+        self.assertEqual(opts["nSubiterTurb"], 10)
+        self.assertEqual(opts["ANKSecondOrdSwitchTol"], 1e-3)
+        self.assertTrue(opts["useNKSolver"])
+        self.assertEqual(opts["NKSwitchTol"], 1e-5)
+        old_opts = solver_options(baseline, self.directory)
+        self.assertEqual(old_opts["MGCycle"], "3w")
+        self.assertFalse(old_opts["useNKSolver"])
+        self.assertNotIn("ANKSecondOrdSwitchTol", old_opts)
+
     def test_validate_cli_does_not_claim_cfd(self):
         input_file = self.directory / "request.json"
         input_file.write_text(json.dumps(self.request))
