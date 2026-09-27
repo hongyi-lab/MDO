@@ -32,6 +32,8 @@ RTX A6000，Torch 2.11.0/CUDA 12.8，FP32、TF32 关闭、CPU 后处理 4 线程
 
 原生到模型的坐标/迎角变换、后缘闭合和表面采样尚需按 [坐标审计](NATIVE_FM_FRAME_AUDIT.md) 对齐；当前原生 6.71 度实际上对应模型约 13.43 度。上述开发集直接使用已处理的发布几何，不走这个原生转换路径，不能把两种验证混在一起。
 
+后续已独立启动原生 AoA=2 度、Mach=0.8 的 `alpha2p0_mach0p8_L81_v1`，保持 1e-10、3000 次内部迭代预算和 8 MPI ranks。复用同一份经哈希校验且质量合格的 81 层网格；本次网格生成时间为零，校验复制时间另记，原生成成本仍保留。启动仅证明任务已排队/执行，不证明收敛。活动指针为服务器项目内 `manifests/active_cfd_run.json`，日志为 `logs/cfd_alpha2p0_mach0p8_v1.log`。模型输入对应迎角应为 8.7166 度，仍须联合变换几何并修正采样后才能公平对比。
+
 ## 可复核数据和图表交付
 
 - 精确汇总：[JSON](SERVER_MDO_PILOT_2026-09-27_results.json)、[CSV](SERVER_MDO_PILOT_2026-09-27_metrics.csv)。JSON 保留两个完整 evaluation 文件的 SHA256。

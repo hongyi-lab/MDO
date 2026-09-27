@@ -6,8 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from mdo_demo.cfd import convergence_report, history_major_iterations, memory_report, solver_options, validate_request
+from mdo_demo.cfd import _module_provenance, convergence_report, convergence_stop_reason, history_internal_iterations, history_major_iterations, memory_report, solver_options, validate_request
 
 
 class CFDContractTests(unittest.TestCase):
@@ -88,6 +90,26 @@ class CFDContractTests(unittest.TestCase):
         self.assertEqual(history_major_iterations({"total minor iters": [0, 3, 9, 11]}), 3)
         self.assertEqual(history_major_iterations({"Total Minor Iters": [0]}), 0)
         self.assertIsNone(history_major_iterations({"unrecognized": [0, 1]}))
+        self.assertEqual(history_internal_iterations({"total minor iters": [0, 3, 2987, 3013]}), 3013)
+        self.assertIsNone(history_internal_iterations({"total minor iters": []}))
+        self.assertIsNone(history_internal_iterations({"total minor iters": [float("nan")]}))
+
+    def test_iteration_limit_is_not_reported_as_convergence_or_fatal_crash(self):
+        state = convergence_report((159470268.7, 1874445.3, 11461.8), tolerance=1e-10,
+                                   solve_failed=True, fatal_failed=False, coefficients={"CL": .77, "CD": .16})
+        self.assertEqual(convergence_stop_reason(state, 3013, 3000), "iteration_budget_exhausted_without_convergence")
+        self.assertEqual(convergence_stop_reason(state, None, 3000), "solver_stopped_without_convergence_reason_unresolved")
+        state["fatal_failed"] = True
+        self.assertEqual(convergence_stop_reason(state, 3013, 3000), "solver_fatal_failure")
+
+    def test_provenance_does_not_take_enclosing_environment_git_revision(self):
+        module = SimpleNamespace(__name__="adflow", __file__=str(self.directory/"site-packages/adflow/__init__.py"))
+        with patch.dict("os.environ", {"MDOLAB_REPO_DIR": str(self.directory/"repos")}), \
+             patch("mdo_demo.cfd.subprocess.run", return_value=SimpleNamespace(stdout=str(self.directory))) as git:
+            result = _module_provenance(module)
+        self.assertIsNone(result["git_revision"])
+        self.assertEqual(git.call_count, 1)
+        self.assertNotIn("site-packages", " ".join(git.call_args.args[0]))
 
     def test_tutorial_preset_is_explicit(self):
         self.request["numerics"] = {"preset": "tutorial"}

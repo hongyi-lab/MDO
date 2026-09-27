@@ -14,6 +14,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import time
 
 import numpy as np
@@ -24,6 +25,7 @@ from .io import read_json, sha256_file, write_json
 MESH_SCRIPT_SHA256 = "bc29faa2587d77aa1b45992c598172dc718807b1e5fb596c1e8bb3d0c571882c"
 TIP_SHA256 = "49c08ffc533168e75880c461f75ff5b106c907e32028cc28a1826203829e6c95"
 CST_REVISION = "9500b19a732463c26b32f6860ac6c517c7d212a5"
+ADFLOW_SURFACE_SOURCE_SHA256 = "786a0c8eb35fc61f4131e60ae3a9f4bcf185caab4f21bdb1c69c8a52bad4836a"
 CONTROL_POINTS = [0.09999976658796647, 0.23391927215290928, 0.36783877771785206,
                   0.5258790832883891, 0.683919388858926, 0.841959694429463, 1.0]
 
@@ -232,10 +234,60 @@ def mesh_options(surface: Path, mach: float, *, wall_normal_layers: int = 81) ->
             "volSmoothIter": 20, "kspRelTol": 1e-10, "kspMaxIts": 1500, "kspSubspaceSize": 50}
 
 
-def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layers: int = 81) -> dict:
+def mesh_quality_from_root(hyp, comm) -> tuple[float, float]:
+    """pyHyp computeQualityLayer reduces its minima to rank zero, not all ranks."""
+    values = (float(hyp.hyp.hypdata.minvolumeoverall),
+              float(hyp.hyp.hypdata.minqualityoverall)) if comm.rank == 0 else None
+    min_volume, min_quality = comm.bcast(values, root=0)
+    if not math.isfinite(min_volume) or not math.isfinite(min_quality) or min_volume <= 0 or min_quality <= 0:
+        raise RuntimeError(f"Invalid generated mesh: minimum volume={min_volume}, minimum quality={min_quality}")
+    return min_volume, min_quality
+
+
+def pressure_convention_audit() -> dict:
+    """Fail closed if this runtime is not the reviewed public surface-force code."""
+    source = Path(os.environ.get("MDOLAB_REPO_DIR", "/unavailable")) / "adflow/src/solver/surfaceIntegrations.F90"
+    actual = sha256_file(source) if source.is_file() else None
+    verified = actual == ADFLOW_SURFACE_SOURCE_SHA256
+    return {"verified": verified, "source_file": str(source), "source_sha256": actual,
+            "reviewed_source_sha256": ADFLOW_SURFACE_SOURCE_SHA256,
+            "source_revision": "8155e98119ec138f805a916400837cd27c41b961",
+            "pressure": "(wall pressure - freestream pressure), including open wall families" if verified else "unverified",
+            "source_lines": {"open_surface_Cp_comment": [493, 499], "pressure_force": 523, "Cp": [525, 526]},
+            "scope": "Pressure reference verified by installed source hash; not a proof of equal discrete integration or moment convention."}
+
+
+def reusable_mesh(manifest: dict, source_result: Path, options: dict) -> tuple[Path, dict]:
+    """Accept a previous positive mesh only for unchanged geometry/mesh physics."""
+    source = read_json(source_result)
+    identity = source["bundle_identity"]
+    if identity["surface_sha256"] != manifest["identity"]["surface_sha256"]:
+        raise ValueError("Mesh reuse requires identical native surface hash")
+    for key in ("mach", "reynolds", "reynolds_length_m", "temperature_k"):
+        if identity["condition"][key] != manifest["identity"]["condition"][key]:
+            raise ValueError(f"Mesh reuse condition mismatch: {key}")
+    if identity["reference"] != manifest["identity"]["reference"]:
+        raise ValueError("Mesh reuse reference mismatch")
+    expected = {str(k): v for k, v in options.items() if k != "inputFile"}
+    actual = {str(k): v for k, v in source["mesh_options"].items() if k != "inputFile"}
+    # JSON serializes the nested BC/family integer keys as strings.
+    if json.loads(json.dumps(expected)) != actual:
+        raise ValueError("Mesh reuse requires identical pyHyp settings")
+    quality = source["mesh_quality"]
+    if not quality.get("positive_volume_and_quality") or any(
+            not math.isfinite(float(quality[k])) or float(quality[k]) <= 0
+            for k in ("minimum_volume", "minimum_quality")):
+        raise ValueError("Mesh reuse requires verified positive volume and quality")
+    mesh = Path(source["solver"]["options"]["gridFile"])
+    if sha256_file(mesh) != source["identity"]["volume_mesh_sha256"]:
+        raise ValueError("Reusable volume mesh hash mismatch")
+    return mesh, source
+
+
+def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layers: int = 81,
+               reuse_mesh_result: Path | None = None) -> dict:
     """Collective pyHyp + ADflow execution on Linux, with no stale result reuse."""
     from mpi4py import MPI
-    from pyhyp import pyHyp
     comm = MPI.COMM_WORLD if comm is None else comm
     start = time.perf_counter()
     manifest = load_bundle(request_path)
@@ -258,39 +310,58 @@ def run_bundle(request_path: Path, output: Path, *, comm=None, wall_normal_layer
     opts = mesh_options(request_path.resolve().parent / manifest["surface_path"],
                         manifest["identity"]["condition"]["mach"], wall_normal_layers=wall_normal_layers)
     mesh_start = time.perf_counter()
-    hyp = pyHyp(comm=comm, options=opts)
-    hyp.run()
-    min_volume = comm.allreduce(float(hyp.hyp.hypdata.minvolumeoverall), op=MPI.MIN)
-    min_quality = comm.allreduce(float(hyp.hyp.hypdata.minqualityoverall), op=MPI.MIN)
-    if not math.isfinite(min_volume) or not math.isfinite(min_quality) or min_volume <= 0 or min_quality <= 0:
-        raise RuntimeError(f"Invalid generated mesh: minimum volume={min_volume}, minimum quality={min_quality}")
     volume = output / "wing_vol.cgns"
-    hyp.writeCGNS(str(volume))
+    reuse = None
+    if reuse_mesh_result is not None:
+        source_mesh, source = reusable_mesh(manifest, reuse_mesh_result, opts)
+        min_volume, min_quality = (source["mesh_quality"][k] for k in ("minimum_volume", "minimum_quality"))
+        if comm.rank == 0:
+            shutil.copyfile(source_mesh, volume)
+        reuse = {"source_result": str(reuse_mesh_result.resolve()), "source_case_sha256": source["case_sha256"],
+                 "volume_mesh_sha256": source["identity"]["volume_mesh_sha256"],
+                 "source_mesh_generation_seconds": source["timing"]["mesh_seconds"],
+                 "reason": "Identical native surface, Mach/Re/T/reference and pyHyp settings; only flow alpha/case identity changed",
+                 "new_mesh_generated": False}
+    else:
+        from pyhyp import pyHyp
+        hyp = pyHyp(comm=comm, options=opts)
+        hyp.run()
+        min_volume, min_quality = mesh_quality_from_root(hyp, comm)
+        hyp.writeCGNS(str(volume))
+        del hyp
     comm.Barrier()
-    mesh_seconds = comm.allreduce(time.perf_counter() - mesh_start, op=MPI.MAX)
+    mesh_preparation_seconds = comm.allreduce(time.perf_counter() - mesh_start, op=MPI.MAX)
+    mesh_seconds = mesh_preparation_seconds if reuse is None else 0.0
     raw = {"schema_version": 1, "problem_id": "new-matched-wing-cfd-v1", "geometry_id": manifest["identity"]["case_name"],
            "geometry_sha256": manifest["identity"]["surface_sha256"], "mesh_path": str(volume),
            "condition": manifest["identity"]["condition"], "reference": manifest["identity"]["reference"],
            "numerics": {"preset": "aerotransformer"},
            "provenance": {"bundle_case_sha256": manifest["case_sha256"], "bundle_identity": manifest["identity"]}}
     normalized = validate_request(raw)
+    if reuse is not None and normalized["identity"]["volume_mesh_sha256"] != reuse["volume_mesh_sha256"]:
+        raise ValueError("Reused mesh changed during verified copy")
     result = run_adflow(normalized, output / "solver_surface", comm=comm,
                         function_groups={"mainwing": "mainwing", "trailingedge": "trailingedge", "tip": "tip"})
     result["volume_case_sha256"] = result["case_sha256"]
     result["case_sha256"] = manifest["case_sha256"]
     result["bundle_identity"] = manifest["identity"]
     result["timing"]["mesh_seconds"] = mesh_seconds
+    result["timing"]["mesh_preparation_seconds"] = mesh_preparation_seconds
+    result["timing"]["mesh_timing_scope"] = "new pyHyp generation" if reuse is None else "hash verification and copy of existing mesh; generation_seconds=0"
+    result["mesh_reuse"] = reuse
     result["timing"]["live_mesh_and_cfd_seconds"] = comm.allreduce(time.perf_counter() - start, op=MPI.MAX)
     result["mesh_options"] = opts
     result["mesh_quality"] = {"minimum_volume": min_volume, "minimum_quality": min_quality,
                               "positive_volume_and_quality": True, "mesh_independence_verified": False}
     result["coefficient_contract"] = "ADflow entire native wall, including tip and blunt trailing edge"
     result["mainwing_coefficient_contract"] = "ADflow integration on native patches 1,2,3,5,6,7; same physical subset as FM sampling; different discrete integration"
+    result["pressure_convention_audit"] = pressure_convention_audit()
     result["structured_field_comparison"] = {"available": False,
         "reason": "Native CFD surface files are saved, but audited conservative transfer to the FM reference surface is not implemented."}
     result["matched_speedup_eligible"] = False
     result["speedup"] = None
-    result["comparison_note"] = "Use group_coefficients.mainwing for FM comparison. Physical subset matches; discrete surface interpolation/integration error remains. Equal-accuracy speedup requires measured tolerances and new-case calibration."
+    result["fm_validation_status"] = "native_to_model_frame_and_sampling_unaligned"
+    result["comparison_note"] = "Standalone CFD reference attempt. FM geometry/flow frame rotation and published surface sampling must be aligned before interpreting coefficient differences. No accuracy or speedup claim."
     if comm.rank == 0:
         write_json(output / "result.json", result)
     return result
@@ -302,18 +373,33 @@ def paired_diagnostics(prediction: dict, cfd: dict) -> dict:
         raise ValueError("FM and CFD case hashes differ")
     if cfd.get("status") != "ok" or not cfd.get("convergence", {}).get("converged"):
         raise ValueError("Nonconverged CFD cannot be used as reference")
+    for record in (prediction, cfd):
+        if "unaligned" in str(record.get("fm_validation_status", "")):
+            raise ValueError("FM/CFD frame or sampling contract is explicitly unaligned; accuracy comparison is blocked")
+    frame = prediction.get("frame_contract", {})
+    sampling = prediction.get("sampling_contract", {})
+    contract_verified = (isinstance(frame, dict) and frame.get("verified") is True
+                         and isinstance(sampling, dict) and sampling.get("verified") is True
+                         and cfd.get("fm_validation_status") == "aligned_verified")
     try:
         truth = cfd["group_coefficients"]["mainwing"]
     except KeyError as exc:
         raise ValueError("CFD mainwing family coefficients required; total-wall integrals are not interchangeable") from exc
     errors = {}
-    for key in ("CL", "CD", "CM"):
+    for key in ("CL", "CD"):
         a, b = float(prediction["coefficients"][key]), float(truth[key])
         if not math.isfinite(a) or not math.isfinite(b):
             raise ValueError("Non-finite coefficients")
         errors[key] = abs(a-b)
-    return {"case_sha256": prediction["case_sha256"], "coefficient_absolute_difference": errors,
-            "interpretation": "Same physical main-wing subset; includes surface-resampling/discrete-integration differences, not model-only error.",
+    return {"case_sha256": prediction["case_sha256"],
+            "coefficient_absolute_difference": errors if contract_verified else None,
+            "unverified_coefficient_difference": None if contract_verified else errors,
+            "coordinate_sampling_contract_verified": contract_verified, "accuracy_eligible": False,
+            "interpretation": ("Verified frame/sampling contract; discrete integration differences remain, so not model-only error."
+                               if contract_verified else "Frame/sampling contract is unknown or unverified. Numerical differences are diagnostic only and cannot be interpreted as prediction accuracy."),
             "cfd_mainwing_coefficients": truth, "cfd_total_wall_coefficients": cfd["coefficients"],
+            "CM_diagnostic_only": {"fm": prediction["coefficients"].get("CM"), "cfd": truth.get("CM"),
+                                   "reason": "FM upstream moment convention is unresolved; excluded from primary error metrics."},
+            "pressure_convention_audit": cfd.get("pressure_convention_audit", {"verified": False}),
             "fm_timing": prediction["timing"], "cfd_timing": cfd["timing"], "speedup": None,
             "equal_accuracy_verified": False, "matched_speedup_eligible": False}

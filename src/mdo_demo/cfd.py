@@ -186,18 +186,62 @@ def history_major_iterations(history: dict) -> int | None:
     return None
 
 
+def history_internal_iterations(history: dict) -> int | None:
+    """The last cumulative ANK minor count, distinct from history row count."""
+    for key, values in history.items():
+        if key.lower() == "total minor iters" and len(values):
+            value = float(values[-1])
+            return int(value) if math.isfinite(value) and value >= 0 and value.is_integer() else None
+    return None
+
+
+def convergence_stop_reason(convergence: dict, internal_iterations: int | None, max_cycles: int) -> str:
+    if convergence["converged"]:
+        return "convergence_criteria_met"
+    if convergence["fatal_failed"]:
+        return "solver_fatal_failure"
+    if not convergence["finite_coefficients"] or convergence["residual_final"] is None:
+        return "nonfinite_solver_output"
+    if internal_iterations is not None and internal_iterations >= max_cycles:
+        return "iteration_budget_exhausted_without_convergence"
+    if not convergence["trim_pass"]:
+        return "lift_trim_not_converged"
+    return "solver_stopped_without_convergence_reason_unresolved"
+
+
+def _serializable_history(history: dict) -> dict:
+    return {str(key): [float(x) if math.isfinite(float(x)) else None for x in values]
+            for key, values in history.items()}
+
+
 def _module_provenance(module: Any) -> dict:
     location = Path(module.__file__).resolve()
     try:
         version = importlib.metadata.version(module.__name__)
     except importlib.metadata.PackageNotFoundError:
         version = str(getattr(module, "__version__", "unknown"))
-    try:
-        revision = subprocess.run(["git", "-C", str(location.parent), "rev-parse", "HEAD"],
-                                  capture_output=True, text=True, timeout=3, check=True).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        revision = None
-    return {"version": version, "git_revision": revision, "module_file": str(location)}
+    revision = None
+    source_root = None
+    configured = os.environ.get("MDOLAB_REPO_DIR")
+    if configured:
+        candidate = (Path(configured) / module.__name__).resolve()
+        try:
+            # Never search for Git metadata above an installed site-packages path:
+            # that can return an unrelated environment/image repository revision.
+            root = subprocess.run(["git", "-c", f"safe.directory={candidate}", "-C", str(candidate),
+                                   "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                                  timeout=3, check=True).stdout.strip()
+            if Path(root).resolve() == candidate and (candidate / "adflow" / "pyADflow.py").is_file():
+                revision = subprocess.run(["git", "-c", f"safe.directory={candidate}", "-C", str(candidate),
+                                           "rev-parse", "HEAD"], capture_output=True, text=True,
+                                          timeout=3, check=True).stdout.strip()
+                source_root = str(candidate)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {"version": version, "git_revision": revision, "source_repository": source_root,
+            "module_file": str(location), "git_revision_scope": "verified configured source checkout; not binary build attestation",
+            "installed_python_source_sha256": sha256_file(location.parent / "pyADflow.py")
+                if (location.parent / "pyADflow.py").is_file() else None}
 
 
 def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: dict[str, str] | None = None) -> dict:
@@ -268,6 +312,9 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
                                      solved_alpha_deg=solved_alpha)
     history = solver.getConvergenceHistory()
     iterations_last_solve = history_major_iterations(history)
+    internal_iterations = history_internal_iterations(history)
+    convergence["stop_reason"] = convergence_stop_reason(convergence, internal_iterations, request["numerics"]["max_cycles"])
+    convergence["stop_reason_basis"] = "residual/solver flags and cumulative internal iteration count; inferred without relaxing criteria"
     trim_major_counts = None if trim is None else [history_major_iterations(item) for item in trim["history"]]
     trim_total_major = (sum(trim_major_counts) if trim_major_counts and all(x is not None for x in trim_major_counts)
                         else None)
@@ -282,6 +329,9 @@ def run_adflow(request: dict, output_dir: Path, *, comm=None, function_groups: d
             "function_groups": function_groups,
             "solved_alpha_deg": solved_alpha if math.isfinite(solved_alpha) else None, "convergence": convergence,
             "iterations_last_solve": iterations_last_solve,
+            "internal_iterations_last_solve": internal_iterations,
+            "configured_max_internal_iterations": request["numerics"]["max_cycles"],
+            "convergence_history": _serializable_history(history),
             "iterations_kind": "major; history row count excluding initial row",
             "trim_iterations": None if trim is None else int(trim["iterations"]),
             "trim_total_major_iterations": trim_total_major,

@@ -1,11 +1,12 @@
 import tempfile
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
 from mdo_demo.io import sha256_file, write_json
-from mdo_demo.matched_cfd import canonical_hash, load_bundle, mesh_options, paired_diagnostics, reference_from_native_blocks, validate_native_input
+from mdo_demo.matched_cfd import canonical_hash, load_bundle, mesh_options, mesh_quality_from_root, paired_diagnostics, reference_from_native_blocks, reusable_mesh, validate_native_input
 
 
 def native_input():
@@ -15,6 +16,50 @@ def native_input():
 
 
 class MatchedCFDTests(unittest.TestCase):
+    def test_mesh_reuse_requires_same_geometry_and_settings_even_if_flow_failed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            mesh = root / "old.cgns"
+            mesh.write_bytes(b"test identity only")
+            identity = {"surface_sha256": "a", "condition": {"mach": .8, "reynolds": 2e7,
+                        "reynolds_length_m": 1., "temperature_k": 300., "alpha_deg": 2.}, "reference": {"area_m2": 1.5}}
+            options = mesh_options(root/"new.xyz", .8)
+            source = {"status": "not_converged", "bundle_identity": identity, "mesh_options": options,
+                      "mesh_quality": {"positive_volume_and_quality": True, "minimum_volume": 1e-14, "minimum_quality": .16},
+                      "solver": {"options": {"gridFile": str(mesh)}}, "identity": {"volume_mesh_sha256": sha256_file(mesh)}}
+            path = root/"result.json"
+            write_json(path, source)
+            self.assertEqual(reusable_mesh({"identity": identity}, path, options)[0], mesh)
+            different = {**identity, "surface_sha256": "b"}
+            with self.assertRaisesRegex(ValueError, "surface hash"):
+                reusable_mesh({"identity": different}, path, options)
+            with self.assertRaisesRegex(ValueError, "pyHyp settings"):
+                reusable_mesh({"identity": identity}, path, {**options, "N": 41})
+            mesh.write_bytes(b"tampered mesh")
+            with self.assertRaisesRegex(ValueError, "hash mismatch"):
+                reusable_mesh({"identity": identity}, path, options)
+
+    def test_mesh_minima_broadcast_root_reduction_not_nonroot_uninitialized_values(self):
+        root_values = (1e-13, .02)
+        class FakeComm:
+            def __init__(self, rank):
+                self.rank = rank
+            def bcast(self, values, root):
+                if self.rank == 0:
+                    self_value = values
+                    self_test.assertEqual(self_value, root_values)
+                else:
+                    self_test.assertIsNone(values)
+                return root_values
+        self_test = self
+        hyp = SimpleNamespace(hyp=SimpleNamespace(hypdata=SimpleNamespace(
+            minvolumeoverall=root_values[0], minqualityoverall=root_values[1])))
+        self.assertEqual(mesh_quality_from_root(hyp, FakeComm(0)), root_values)
+        self.assertEqual(mesh_quality_from_root(None, FakeComm(7)), root_values)
+        root_values = (0., .02)
+        with self.assertRaisesRegex(RuntimeError, "Invalid generated mesh"):
+            mesh_quality_from_root(None, FakeComm(7))
+
     def test_missing_native_constants_fail(self):
         raw = native_input()
         del raw["geometry"]["SA"]
@@ -91,14 +136,27 @@ class MatchedCFDTests(unittest.TestCase):
         self.assertAlmostEqual(float(geometry[0,64,128]), 0.)
 
     def test_pair_requires_identity_and_convergence(self):
-        prediction = {"case_sha256": "a", "coefficients": {"CL": .5, "CD": .03, "CM": -.1}, "timing": {}}
+        prediction = {"case_sha256": "a", "coefficients": {"CL": .5, "CD": .03, "CM": -.1}, "timing": {},
+                      "frame_contract": {"verified": True}, "sampling_contract": {"verified": True}}
         cfd = {"case_sha256": "a", "status": "ok", "convergence": {"converged": True},
-               "coefficients": {"CL": .51, "CD": .031, "CM": -.11}, "timing": {}}
+               "coefficients": {"CL": .51, "CD": .031, "CM": -.11}, "timing": {},
+               "fm_validation_status": "aligned_verified"}
         cfd["group_coefficients"] = {"mainwing": dict(cfd["coefficients"])}
         result = paired_diagnostics(prediction, cfd)
         self.assertAlmostEqual(result["coefficient_absolute_difference"]["CL"], .01)
         self.assertIsNone(result["speedup"])
         self.assertFalse(result["equal_accuracy_verified"])
+        cfd["fm_validation_status"] = "native_to_model_frame_and_sampling_unaligned"
+        with self.assertRaisesRegex(ValueError, "explicitly unaligned"):
+            paired_diagnostics(prediction, cfd)
+        cfd.pop("fm_validation_status")
+        unknown = paired_diagnostics(prediction, cfd)
+        self.assertIsNone(unknown["coefficient_absolute_difference"])
+        self.assertFalse(unknown["coordinate_sampling_contract_verified"])
+        self.assertFalse(unknown["accuracy_eligible"])
+        cfd["fm_validation_status"] = "aligned_verified"
+        prediction.pop("sampling_contract")
+        self.assertIsNone(paired_diagnostics(prediction, cfd)["coefficient_absolute_difference"])
         cfd["case_sha256"] = "b"
         with self.assertRaisesRegex(ValueError, "hashes differ"):
             paired_diagnostics(prediction, cfd)

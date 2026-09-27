@@ -8,6 +8,8 @@
 说明和目录见 [服务器 MDO 适配试验](docs/SERVER_MDO_PILOT_2026-09-27.md)，设置见 [v2 pilot 配置](configs/mdo_pilot_v2.json)。
 使用已冻结的 450 Train + 350 Dev 工况，Calibration/Test 暂不使用。这是开发试验，不能当作正式测试成绩。
 
+**首轮 A6000 结果已完成：**固定 5 epochs 后，Dev 的 CL 平均误差 `0.01455 → 0.00593`，CD 平均误差 `9.36 → 5.19 drag counts`，单次预测约 `32 ms`。最坏 CD 误差仍为 `36.79 counts`。见 [结果与限制](docs/SERVER_MDO_PILOT_2026-09-27_RESULTS.md) 和 [指标 CSV](docs/SERVER_MDO_PILOT_2026-09-27_metrics.csv)。独立原生 CFD 的第一例未收敛，且 [原生到模型接口](docs/NATIVE_FM_FRAME_AUDIT.md) 尚需对齐，**没有等精度加速倍数**。当前用户交付改为论文式静态图与指标表。
+
 ## 先前冻结的 v1 协议与划分
 
 [CFD × Foundation Model 实验协议 v1](docs/EXPERIMENT_PROTOCOL_V1.md) 已约定 Large/微调对照、数据来源、训练参数、置信区间、计时及推进条件。

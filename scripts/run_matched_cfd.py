@@ -31,6 +31,7 @@ def main() -> int:
     run.add_argument("--request", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--wall-normal-layers", type=int, default=81)
+    run.add_argument("--reuse-mesh-result", type=Path, help="Reuse a hash-verified positive mesh from a previous result with unchanged native surface and mesh settings")
     compare = sub.add_parser("compare", help="Diagnostic pair, not an equal-accuracy speedup claim")
     compare.add_argument("--prediction", type=Path, required=True)
     compare.add_argument("--cfd-result", type=Path, required=True)
@@ -71,13 +72,21 @@ def main() -> int:
         from mpi4py import MPI
         comm = MPI.COMM_WORLD
         try:
-            result = run_bundle(args.request, args.output, comm=comm, wall_normal_layers=args.wall_normal_layers)
+            result = run_bundle(args.request, args.output, comm=comm, wall_normal_layers=args.wall_normal_layers,
+                                reuse_mesh_result=args.reuse_mesh_result)
             if comm.rank == 0:
                 print(f"CFD status={result['status']}; {args.output / 'result.json'}", flush=True)
             return 0 if result["status"] == "ok" else 2
         except Exception as exc:
             if comm.rank == 0:
                 print(f"CFD failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+                result_path = args.output / "result.json"
+                if result_path.exists():
+                    failure = read_json(result_path)
+                    if failure.get("status") == "running":
+                        failure.update(status="failed", error_type=type(exc).__name__, error=str(exc),
+                                       convergence={"converged": False}, matched_speedup_eligible=False)
+                        write_json(result_path, failure)
             traceback.print_exc()
             if comm.size > 1:
                 comm.Abort(3)
