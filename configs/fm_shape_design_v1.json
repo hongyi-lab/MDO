@@ -1,0 +1,21 @@
+{
+  "schema": "fm_shape_design_v1",
+  "scope": "FM-only one-way shell aero-structural shape and sizing candidate; not CFD-verified or globally optimal",
+  "design": {
+    "alpha_deg": {"initial": 0, "lower": -2, "upper": 2, "scale": 2},
+    "skin_m": {"initial": 0.005, "lower": 0.0015, "upper": 0.008, "scale": 0.005},
+    "web_m": {"initial": 0.004, "lower": 0.0015, "upper": 0.008, "scale": 0.005},
+    "twist_mid_deg": {"initial": 0, "lower": -2, "upper": 2, "scale": 2},
+    "twist_tip_deg": {"initial": 0, "lower": -3, "upper": 3, "scale": 3},
+    "chord_root_scale": {"initial": 1, "lower": 0.9, "upper": 1.1, "scale": 0.1},
+    "chord_mid_scale": {"initial": 1, "lower": 0.9, "upper": 1.1, "scale": 0.1},
+    "chord_tip_scale": {"initial": 1, "lower": 0.9, "upper": 1.1, "scale": 0.1},
+    "span_scale": {"initial": 1, "lower": 0.95, "upper": 1.05, "scale": 0.05},
+    "sweep_delta_deg": {"initial": 0, "lower": -3, "upper": 3, "scale": 3}
+  },
+  "limits": {"lift_coefficient_min": 0.5, "drag_coefficient_max": 0.06, "ks_failure_max": 1,
+    "tip_displacement_max_m": 0.15, "objective_scale_kg": 30, "area_ratio_min": 0.9, "volume_ratio_min": 0.9},
+  "optimizer": {"method": "COBYLA", "max_evaluations": 180, "rhobeg": 0.2, "tol": 0.002, "catol": 0.0001},
+  "comparison": "Candidate vs its initial design under the SAME frozen FM and real TACS; independent CFD verification deferred by user.",
+  "bounds_scope": "Exploratory geometry trust box around baseline, NOT a calibrated model accuracy guarantee. No buckling, flutter or aeroelastic feedback."
+}
