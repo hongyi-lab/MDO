@@ -12,6 +12,7 @@ from mdo_demo.io import read_json, write_json
 from mdo_demo.aerostructural import VARIABLES, constraint_margins, validate_protocol
 from mdo_demo.aero_contract import validate_request
 from mdo_demo.matched_cfd import canonical_hash
+from mdo_demo.seed_policy import fixed_seed_policy
 
 
 def finite(value, name, *, positive=False):
@@ -49,6 +50,38 @@ def check_physics(checked, cfg, base_geometry):
     if aero.get("integration_audit", {}).get("passed") is not True:
         raise ValueError("Native CFD force/moment reconstruction was not audited")
     require_sha(aero.get("provenance", {}).get("solver_result_content_sha256"), "native CFD result")
+    init = fixed_seed_policy(cfg)
+    if init is not None:
+        receipt = aero.get("fixed_seed_receipt") or {}
+        if (receipt.get("schema") != "aerostructural_fixed_seed_receipt_v3"
+                or receipt.get("accepted") is not True or receipt.get("field_audit_passed") is not True
+                or receipt.get("protocol_sha256") != cfg["protocol_sha256"]
+                or receipt.get("initialization_manifest_sha256") != init["manifest_sha256"]
+                or receipt.get("case_sha256") != ident["case_id"]
+                or receipt.get("alpha_deg") != checked["design"]["alpha_deg"]
+                or receipt.get("result_content_sha256") != aero["provenance"]["solver_result_content_sha256"]
+                or receipt.get("actual_mpi_ranks") != 8
+                or receipt.get("relative_residual") != relative
+                or receipt.get("shared_cost_added_to_call") is not False):
+            raise ValueError("Verification lacks matching actual shared-seed solver evidence")
+        mode = receipt.get("mode")
+        if mode == "qualified_zero_cache":
+            if ident["condition"]["alpha_deg"] != 0. or receipt.get("continuation_count") != 0:
+                raise ValueError("Only zero-degree reference may use the initial cache")
+        else:
+            expected_count = {"fixed_zero_seed": 0, "fixed_zero_seed_plus_one_continuation": 1}.get(mode)
+            if expected_count is None or receipt.get("continuation_count") != expected_count:
+                raise ValueError("Verification used an unsupported restart chain")
+            options = receipt.get("actual_solver_options", {})
+            required = {"useANKSolver": True, "useNKSolver": False, "infChangeCorrection": False,
+                        "equationType": "RANS", "turbulenceModel": "SA", "nCycles": 1200,
+                        "L2Convergence": 1e-10, "L2ConvergenceRel": 1e-16,
+                        "writeVolumeSolution": True, "solutionPrecision": "double",
+                        "MGCycle": "sg", "ANKSecondOrdSwitchTol": 1e-3,
+                        "ANKCoupledSwitchTol": 1e-16, "nSubiterTurb": 10}
+            if any(options.get(k) != v or (type(v) is bool and options.get(k) is not v)
+                   for k, v in required.items()):
+                raise ValueError("Actual CFD options differ from the common numerical strategy")
     structural = checked["structural"]
     if structural.get("backend") != "TACS" or structural.get("status") != "ok":
         raise ValueError("Verification must contain an actual successful TACS solve")
@@ -99,6 +132,18 @@ def compare(cfd_run, fm_run, cfd_check, fm_check):
         if run.get("action") != "optimize" or run.get("status") not in ("completed", "budget_limited"):
             raise ValueError("Only completed or honestly budget-limited optimization runs can be compared")
     rows = []
+    init = fixed_seed_policy(cfg)
+    shared = None
+    if init is not None:
+        shared = cfd_run.get("shared_seed_preparation")
+        if not isinstance(shared, dict) or any(s.get("shared_seed_preparation") != shared for s in sources):
+            raise ValueError("All routes and verifications must share the same preparation ledger")
+        if (shared.get("manifest_sha256") != init["manifest_sha256"]
+                or shared.get("accounting") != init["shared_cost_accounting"]):
+            raise ValueError("Preparation ledger differs from the common protocol")
+        require_sha(shared.get("seed_result_content_sha256"), "shared initial result")
+        require_sha(shared.get("checkpoint_sha256"), "shared checkpoint")
+        finite(shared.get("shared_seed_preparation_seconds"), "shared preparation cost", positive=True)
     verified_requests = []
     structures = []
     for name, run, check in (("ADflow + TACS", cfd_run, cfd_check), ("FM + TACS", fm_run, fm_check)):
@@ -116,6 +161,8 @@ def compare(cfd_run, fm_run, cfd_check, fm_check):
         if checked.get("aerodynamic_case_sha256") != candidate.get("aerodynamic_case_sha256"):
             raise ValueError("Verification physical case differs from the candidate")
         verified_requests.append(check_physics(checked, cfg, run["base_geometry_sha256"]))
+        if shared is not None and checked["aerodynamic_evidence"]["fixed_seed_receipt"].get("shared_preparation") != shared:
+            raise ValueError("Final solver receipt identifies another shared preparation ledger")
         structural = checked["structural"]
         structures.extend([candidate["structural"], structural])
         optimization_time = finite(run["total_wall_seconds"], "complete optimization cost", positive=True)
@@ -126,6 +173,12 @@ def compare(cfd_run, fm_run, cfd_check, fm_check):
         verification_time = finite(check["total_wall_seconds"], "complete verification cost", positive=True)
         if finite(check["verification_wall_seconds"], "verification cost", positive=True) > verification_time:
             raise ValueError("Verification time exceeds the reported complete cost")
+        if shared is not None:
+            complete_opt = finite(run.get("stage_process_wall_seconds"), "optimization process cost", positive=True)
+            complete_check = finite(check.get("stage_process_wall_seconds"), "verification process cost", positive=True)
+            if complete_opt < optimization_time or complete_check < verification_time:
+                raise ValueError("Complete process timings cannot be narrower than inner timings")
+            optimization_time, verification_time = complete_opt, complete_check
         rows.append({"method": name, "verified_wingbox_mass_kg": structural["mass_kg"],
                      "verified_CL": checked["coefficients"]["CL"], "verified_CD": checked["coefficients"]["CD"],
                      "verified_KS_yield": structural["ks_failure"],
@@ -137,6 +190,11 @@ def compare(cfd_run, fm_run, cfd_check, fm_check):
                      "total_wall_seconds": optimization_time + verification_time,
                      "optimizer_converged": run["optimizer_converged"],
                      "aerodynamic_calls": run["aerodynamic_call_count"]})
+        if shared is not None:
+            preparation = shared["shared_seed_preparation_seconds"]
+            rows[-1].update(shared_seed_preparation_seconds=preparation,
+                           online_optimization_and_verification_seconds=optimization_time + verification_time,
+                           total_wall_seconds=preparation + optimization_time + verification_time)
     a = structures[0]
     for b in structures:
         for key in ("common_geometry_source", "mesh_sha256", "material"):
@@ -159,6 +217,7 @@ def compare(cfd_run, fm_run, cfd_check, fm_check):
             "scope": "fixed-planform one-way aero-structural sizing; mainwing-only common loads; not full aircraft or two-way aeroelastic MDO",
             "relative_verified_mass_difference": (rows[1]["verified_wingbox_mass_kg"] / rows[0]["verified_wingbox_mass_kg"] - 1),
             "equal_quality_speedup": None,
+            "shared_preparation": shared,
             "note": "Cost and quality are reported together. This bounded integration pilot does not establish matched-quality speedup or global optimality."}
 
 

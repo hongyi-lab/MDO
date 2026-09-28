@@ -16,6 +16,8 @@ from mdo_demo.cfd import run_adflow
 from mdo_demo.cfd_seed import validate_seed_source,audit_seed
 from mdo_demo.io import read_json,write_json
 from mdo_demo.matched_cfd import load_bundle,pressure_convention_audit
+from mdo_demo.aerostructural import validate_protocol
+from mdo_demo.seed_policy import load_seed_manifest,validate_target_policy
 
 
 def main():
@@ -24,6 +26,9 @@ def main():
         parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--checkpoint-sha256',required=True)
     parser.add_argument('--validate-only',action='store_true')
+    parser.add_argument('--protocol',type=Path)
+    parser.add_argument('--initialization-manifest',type=Path)
+    parser.add_argument('--project',type=Path)
     args=parser.parse_args()
     started=time.perf_counter()
     normalized,prov=validate_seed_source(args.source_result,args.source_request,args.request,args.checkpoint,
@@ -31,7 +36,19 @@ def main():
                                          seed_cost_manifest_path=args.seed_cost_manifest)
     target=load_bundle(args.request)
     # The existing bundle stores its native condition through a float32 array.
-    if abs(target['identity']['condition']['alpha_deg'] - .2) > 1e-8:
+    common_args = (args.protocol,args.initialization_manifest,args.project)
+    if any(common_args) and not all(common_args):
+        raise ValueError('Shared policy requires protocol, initialization manifest and project together')
+    if all(common_args):
+        cfg=validate_protocol(read_json(args.protocol))
+        _,files,_=load_seed_manifest(args.project,args.initialization_manifest,cfg)
+        validate_target_policy(cfg,target)
+        for key,argument in (('source_result',args.source_result),('source_request',args.source_request),
+                            ('checkpoint',args.checkpoint),('grid_audit',args.grid_audit),
+                            ('seed_cost_manifest',args.seed_cost_manifest)):
+            if files[key] != argument.resolve():
+                raise ValueError('Requested initialization differs from frozen manifest: '+key)
+    elif abs(target['identity']['condition']['alpha_deg'] - .2) > 1e-8:
         raise ValueError('This first fixed-seed diagnostic is frozen at native alpha +0.2 degrees')
     if args.validate_only:
         print('Fixed-seed source, new target, grid/fields and separate preparation ledger verified; no CFD run.')
@@ -64,7 +81,7 @@ def main():
     result['mesh_quality']=source['mesh_quality']
     result['pressure_convention_audit']=pressure_convention_audit()
     result['matched_speedup_eligible']=False
-    result['comparison_note']='Fixed 0-degree initial state used for a new +0.2-degree physical case. Shared seed preparation is separate. Not a completed MDO comparison.'
+    result['comparison_note']='Fixed 0-degree initial state used for a separately identified target case. Shared seed preparation is separate. This CFD call alone is not a completed MDO comparison.'
     try:
         result['seed_audit']=audit_seed(source,result)
         if not result['seed_audit']['accepted']:

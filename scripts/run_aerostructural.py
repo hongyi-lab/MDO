@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Execute one actual common-interface CFD/FM -> TACS pilot under compute.lock."""
 import argparse
+import os
 from pathlib import Path
 import sys
 import time
@@ -11,6 +12,8 @@ from mdo_demo.io import read_json, write_json
 from mdo_demo.aerostructural import PilotEvaluator, VARIABLES, validate_protocol
 from mdo_demo.aerostructural_runtime import UnifiedRuntime
 from mdo_demo.matched_cfd import canonical_hash, load_bundle
+from mdo_demo.seed_policy import fixed_seed_policy
+from mdo_demo.shared_resources import wait_for_resources
 
 
 def main():
@@ -25,11 +28,18 @@ def main():
     parser.add_argument("--action", choices=("single", "optimize", "verify"), default="single")
     parser.add_argument("--candidate-result", type=Path)
     parser.add_argument("--reuse-mesh-result", type=Path)
+    parser.add_argument("--initialization-manifest", type=Path)
     parser.add_argument("--mpi-ranks", type=int, default=8)
     args = parser.parse_args()
     import fcntl
     args.output.mkdir(parents=True, exist_ok=False)
     cfg = validate_protocol(read_json(args.protocol))
+    if fixed_seed_policy(cfg) is not None:
+        for name in ('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS'):
+            os.environ[name]='1'
+        if args.backend=='fm':
+            import torch
+            torch.set_num_threads(1)
     base = load_bundle(args.request)
     lock_path = args.project / "manifests" / "compute.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,9 +47,14 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         started = time.perf_counter()
         try:
+            initial_wait = 0.
+            if fixed_seed_policy(cfg) is not None:
+                initial_wait = wait_for_resources(args.project, args.output / 'resource_gate.jsonl',
+                                need_gpu=args.backend=='fm', ranks=8 if args.backend=='adflow' else 1)
             runtime = UnifiedRuntime(args.project, args.request, cfg, args.output / "runtime",
                         backend=args.backend, checkpoint=args.checkpoint, device=args.device,
-                        reuse_mesh_result=args.reuse_mesh_result, mpi_ranks=args.mpi_ranks)
+                        reuse_mesh_result=args.reuse_mesh_result, mpi_ranks=args.mpi_ranks,
+                        initialization_manifest=args.initialization_manifest)
             evaluation = PilotEvaluator(cfg, args.backend, args.output / "analysis", runtime.aero, runtime.structure)
             if args.action == "verify":
                 if args.backend != "adflow" or args.candidate_result is None:
@@ -71,6 +86,8 @@ def main():
             result.update(protocol=cfg, base_case_sha256=base["case_sha256"],
                           base_geometry_sha256=base["identity"]["surface_sha256"])
             result["runtime_setup_wall_seconds"] = runtime.setup_wall_seconds
+            result["shared_seed_preparation"] = runtime.shared_seed_preparation
+            result["shared_resource_wait_seconds"] = initial_wait + runtime.resource_wait_seconds
             result["full_timing_scope"] = "from acquired shared compute lock: runtime probe, model loading/native input, CFD/FM, transfer, TACS, optimizer and output"
             write_json(args.output / "result.json", result)
             print(f"{args.action} {args.backend}: {result['status']}; {args.output / 'result.json'}", flush=True)

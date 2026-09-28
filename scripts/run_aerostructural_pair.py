@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from mdo_demo.io import read_json, sha256_file, write_json
 from mdo_demo.aerostructural import validate_protocol
 from mdo_demo.matched_cfd import load_bundle
+from mdo_demo.seed_policy import fixed_seed_policy, load_seed_manifest
 
 
 def main():
@@ -24,10 +25,29 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--protocol", type=Path, default=ROOT / "configs/aerostructural_pilot_v1.json")
     parser.add_argument("--reuse-mesh-result", type=Path)
+    parser.add_argument("--initialization-manifest", type=Path)
     args = parser.parse_args()
     protocol = validate_protocol(read_json(args.protocol))
     receipt = read_json(args.build_receipt)
     checks = ("local_tests", "actual_tacs_mechanics", "fm_to_tacs_single_point", "native_field_reintegration")
+    fixed = fixed_seed_policy(protocol)
+    shared_ledger = None
+    if fixed is not None:
+        if args.initialization_manifest is None or args.reuse_mesh_result is not None:
+            raise ValueError("Frozen initialization manifest required; no adaptive reuse is allowed")
+        _, _, shared_ledger = load_seed_manifest(args.project, args.initialization_manifest, protocol)
+        checks += ("fixed_seed_manifest", "actual_fixed_seed_target", "actual_zero_cache_to_tacs")
+        if receipt.get("initialization_manifest_sha256") != fixed["manifest_sha256"]:
+            raise ValueError("Build receipt used a different initialization manifest")
+        required_code = {"src/mdo_demo/seed_policy.py", "src/mdo_demo/fixed_seed_runtime.py",
+                         "src/mdo_demo/aerostructural.py", "src/mdo_demo/aerostructural_runtime.py",
+                         "src/mdo_demo/cfd_seed.py", "src/mdo_demo/cfd_restart.py",
+                         "src/mdo_demo/shared_resources.py",
+                         "scripts/run_seed_initialization.py", "scripts/run_checkpoint_refinement.py",
+                         "scripts/audit_shared_seed.py", "scripts/run_aerostructural.py",
+                         "scripts/run_aerostructural_pair.py", "scripts/compare_aerostructural.py"}
+        if not required_code.issubset(receipt.get("code_files", {})):
+            raise ValueError("Build receipt must bind all new shared-seed runtime and audit files")
     if any(receipt.get("checks", {}).get(key) is not True for key in checks):
         raise ValueError("Complete and record all build checks before launching the experiment")
     if receipt.get("protocol_sha256") != protocol["protocol_sha256"]:
@@ -48,6 +68,8 @@ def main():
              "scope": "bounded one-way common-mainwing aero-structural integration pilot", "stages": [],
              "new_training": False, "max_unique_optimization_cfd_cases": protocol["optimizer"]["max_aero_evaluations"],
              "max_additional_final_verification_cfd_cases": 3}
+    state["shared_seed_preparation"] = shared_ledger
+    state["project_shared_preparation_count"] = 1 if fixed is not None else 0
     write_json(args.output / "protocol.json", protocol)
     started = time.perf_counter()
     reuse = args.reuse_mesh_result
@@ -68,6 +90,8 @@ def main():
                    "--action", action, "--output", str(args.output / stage)]
         if checkpoint is not None:
             command += ["--checkpoint", str(checkpoint)]
+        if args.initialization_manifest is not None:
+            command += ["--initialization-manifest", str(args.initialization_manifest)]
         if reuse is not None:
             command += ["--reuse-mesh-result", str(reuse)]
         if candidate is not None:
@@ -83,7 +107,15 @@ def main():
                          wall_seconds=time.perf_counter()-started)
             write_json(manifest_path, state)
             return 2
-        if stage == "adflow_optimization":
+        if fixed is not None:
+            result_path = args.output / stage / "result.json"
+            stage_result = read_json(result_path)
+            stage_result["stage_process_wall_seconds"] = entry["wall_seconds"]
+            stage_result["stage_process_timing_scope"] = "complete child process, including imports, lock wait, runtime setup, analysis, optimization or verification and serialization"
+            # Record this BEFORE the candidate is read by its later verification.
+            # The verification hash therefore binds the final, immutable record.
+            write_json(result_path, stage_result)
+        if stage == "adflow_optimization" and fixed is None:
             results = sorted((args.output / stage / "analysis").glob("eval_*/aero/cfd/result.json"))
             if results:
                 reuse = results[-1]

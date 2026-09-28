@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import os
 import sys
 import time
 
@@ -18,11 +19,13 @@ from .aerostructural import PhysicsFailure, condition_bundle, cfd_numerical_poli
 from .io import read_json, write_json
 from .matched_cfd import load_bundle, prediction_sample
 from .structural import FRAME
+from .seed_policy import fixed_seed_policy
 
 
 class UnifiedRuntime:
     def __init__(self, project, base_request, protocol, output, *, backend, checkpoint=None,
-                 device="cuda", reuse_mesh_result=None, mpi_ranks=8, solver_preset=None):
+                 device="cuda", reuse_mesh_result=None, mpi_ranks=8, solver_preset=None,
+                 initialization_manifest=None):
         self.project = Path(project).resolve()
         self.code = self.project / "code" / "MDO"
         self.base_request = Path(base_request).resolve()
@@ -43,6 +46,7 @@ class UnifiedRuntime:
             raise ValueError("Runtime solver preset differs from the frozen CFD policy")
         self.solver_preset = self.cfd_policy["preset"]
         self.model = None
+        self.resource_wait_seconds = 0.
         manifest = load_bundle(self.base_request)
         self.native_vertices = native_mainwing_vertices(self.base_request.parent / manifest["surface_path"])
         # BOTH providers use this exact native surface to construct the same FE
@@ -55,6 +59,20 @@ class UnifiedRuntime:
         self.probe = read_json(runtime_path)
         self.dynamic_pressure_pa = self.probe["flow"]["dynamic_pressure_pa"]
         self.setup_wall_seconds = time.perf_counter() - self.started
+        self.fixed_seed = None
+        self.shared_seed_preparation = None
+        if fixed_seed_policy(protocol) is not None:
+            if initialization_manifest is None or reuse_mesh_result is not None:
+                raise ValueError("Fixed-seed protocol requires its manifest and forbids adaptive mesh/result reuse")
+            from .fixed_seed_runtime import FixedSeedCFD
+            self.fixed_seed = FixedSeedCFD(self, initialization_manifest)
+            self.shared_seed_preparation = self.fixed_seed.ledger
+            # Both FM and CFD routes require the identical qualified reference
+            # capability; preparation costs are charged once at comparison.
+            self.fixed_seed.preflight(self.base_request)
+        elif initialization_manifest is not None:
+            raise ValueError("Initialization manifest requires the new frozen protocol")
+        self.setup_wall_seconds = time.perf_counter() - self.started
 
     def _inside(self, argument):
         if isinstance(argument, Path):
@@ -63,19 +81,30 @@ class UnifiedRuntime:
         return str(argument)
 
     def image_call(self, args, log_path):
+        return self.image_process(args, log_path)["wall_seconds"]
+
+    def image_process(self, args, log_path, *, allowed_exit_codes=(0,)):
         log_path = Path(log_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, str(self.code / "scripts/run_cfd_rootless.py"), "--project", str(self.project),
                    "--", "/bin/bash", "-c", 'source "$BASHRC_MDOLAB"; exec "$@"', "mdo-runtime"]
         command += [self._inside(arg) for arg in args]
         start = time.perf_counter()
+        if fixed_seed_policy(self.protocol) is not None and args and str(args[0]) == 'mpirun':
+            from .shared_resources import wait_for_resources
+            self.resource_wait_seconds += wait_for_resources(self.project, log_path.with_suffix('.resources.jsonl'), ranks=8)
+        environment = dict(os.environ)
+        for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            environment[name] = "1"
         with log_path.open("w", encoding="utf-8") as stream:
-            run = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=False)
+            run = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=False, env=environment)
         duration = time.perf_counter() - start
-        if run.returncode:
+        receipt = {"exit_code": run.returncode, "wall_seconds": duration, "log": str(log_path)}
+        write_json(log_path.with_suffix(log_path.suffix + ".process.json"), receipt)
+        if run.returncode not in allowed_exit_codes:
             tail = log_path.read_text(encoding="utf-8", errors="replace")[-1800:]
             raise PhysicsFailure(f"Physical runtime exited {run.returncode}; evidence={log_path}\n{tail}")
-        return duration
+        return receipt
 
     def physical_request(self, manifest):
         identity = manifest["identity"]
@@ -94,6 +123,10 @@ class UnifiedRuntime:
         request = self.physical_request(manifest)
         write_json(output / "physical_request.json", request)
         if self.backend == "fm":
+            if fixed_seed_policy(self.protocol) is not None:
+                from .shared_resources import wait_for_resources
+                self.resource_wait_seconds += wait_for_resources(self.project, output / 'resources.jsonl',
+                                                                 need_gpu=True, ranks=1)
             from .aerotransformer import AeroTransformerPredictor
             load_seconds = 0.
             if self.model is None:
@@ -109,6 +142,12 @@ class UnifiedRuntime:
                         provenance=prediction["provenance"])
             np.savez_compressed(output / "prediction.npz", fields=prediction["fields"],
                                 original_geometry=sample["original_geometry"], condition=sample["condition"])
+        elif self.backend == "adflow" and self.fixed_seed is not None:
+            result_path, export, export_meta, receipt = self.fixed_seed.run(request_path, output)
+            result = read_json(result_path)
+            loads = from_native_export(request, request_path.parent / manifest["surface_path"],
+                                       export, export_meta, result)
+            loads["fixed_seed_receipt"] = receipt
         elif self.backend == "adflow":
             run_dir = output / "cfd"
             args = ["mpirun", "--bind-to", "none", "-np", str(self.mpi_ranks), "python",

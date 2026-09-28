@@ -15,6 +15,7 @@ import numpy as np
 
 from .io import json_default, read_json, write_json
 from .matched_cfd import canonical_hash, load_bundle
+from .seed_policy import fixed_seed_policy
 
 VARIABLES = ("alpha_deg", "skin_m", "web_m")
 
@@ -25,7 +26,8 @@ def cfd_numerical_policy(cfg: dict) -> dict:
                                         "l2_convergence": 1e-10, "mpi_ranks": 8}))
     if set(policy) != {"preset", "max_cycles", "l2_convergence", "mpi_ranks"}:
         raise ValueError("CFD policy requires explicit preset, budget, tolerance and ranks")
-    if policy["preset"] not in {"robust_rans", "robust_rans_late_nk"}:
+    initialization = fixed_seed_policy(cfg)
+    if policy["preset"] not in {"robust_rans", "robust_rans_late_nk", "robust_rans_ank_polish"}:
         raise ValueError("Unsupported shared CFD policy preset")
     if type(policy["max_cycles"]) is not int or policy["max_cycles"] <= 0:
         raise ValueError("CFD policy max_cycles must be a positive integer")
@@ -112,13 +114,23 @@ def condition_bundle(base_request: Path, alpha_deg: float, output: Path) -> Path
     arrays["condition"][0] = float(alpha_deg)
     # The exact representable angle sent to both solvers is the same float32.
     actual_alpha = float(arrays["condition"][0])
-    np.savez(npz_path, **arrays)
+    unchanged_angle = actual_alpha == manifest["identity"]["condition"]["alpha_deg"]
+    if unchanged_angle:
+        # A cache refers to the original immutable bundle bytes. Re-encoding an
+        # unchanged NPZ/JSON can change its hash across platforms or NumPy
+        # versions even when every physical array is identical.
+        shutil.copyfile(base_request.parent / manifest["fm_input_path"], npz_path)
+    else:
+        np.savez(npz_path, **arrays)
     surface_path = output / manifest["surface_path"]
     shutil.copyfile(base_request.parent / manifest["surface_path"], surface_path)
     native = read_json(base_request.parent / manifest["native_input_path"])
     native["condition"]["alpha_deg"] = actual_alpha
     native_path = output / manifest["native_input_path"]
-    write_json(native_path, native)
+    if unchanged_angle:
+        shutil.copyfile(base_request.parent / manifest["native_input_path"], native_path)
+    else:
+        write_json(native_path, native)
     identity = manifest["identity"]
     identity["condition"]["alpha_deg"] = actual_alpha
     identity["native_input_sha256"] = sha256_file(native_path)
@@ -228,7 +240,7 @@ class PilotEvaluator:
                           common_verification_complete=False,
                           aerodynamic_contract=aero.get("contract_status"),
                           aerodynamic_evidence={k: copy.deepcopy(aero.get(k)) for k in
-                              ("backend", "reference_eligible", "solver_convergence", "integration_audit", "request")})
+                              ("backend", "reference_eligible", "solver_convergence", "integration_audit", "request", "fixed_seed_receipt")})
             success["aerodynamic_evidence"]["provenance"] = {
                 "solver_result_content_sha256": aero.get("provenance", {}).get("solver_result_content_sha256")}
             # Reject nonfinite auxiliary provider fields before they can corrupt
