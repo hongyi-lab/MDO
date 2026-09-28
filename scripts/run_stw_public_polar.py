@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 import numpy as np
 from mdo_demo.io import read_json, write_json, sha256_file
 from mdo_demo.stw_benchmark import make_stw_surface, polar_scores, UPSTREAM_COMMIT
+from mdo_demo.input_contract import encode_condition
 
 
 def prepare(assets, output):
@@ -83,14 +84,14 @@ def evaluate(project, input_dir, output):
         for name, checkpoint in checkpoints.items():
             model = AeroTransformerPredictor(checkpoint, 'cuda')
             base = {k: arrays[k] for k in ['original_geometry', 'geometry', 'ref_area']}
-            base['condition'] = np.array([arrays['alpha'][0], .77], dtype=np.float32)
+            base['condition'] = encode_condition(alpha_deg=arrays['alpha'][0], mach=.77)
             tw = time.perf_counter()
             for _ in range(10): model.predict(base)
             warmup_seconds = time.perf_counter()-tw
             rows, fields = [], []
             stage_t0 = time.perf_counter()
             for i, alpha in enumerate(arrays['alpha']):
-                sample = dict(base, condition=np.array([alpha, .77], dtype=np.float32))
+                sample = dict(base, condition=encode_condition(alpha_deg=alpha, mach=.77))
                 reps = []
                 values = []
                 for rep in range(3):

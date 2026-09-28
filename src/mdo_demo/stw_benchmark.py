@@ -6,6 +6,7 @@ No CFD labels enter geometry construction, and no model is trained here.
 from pathlib import Path
 import re
 import numpy as np
+from .input_contract import encode_stw_surface, describe_contract
 
 UPSTREAM_COMMIT = "48e54b4dcc1c6c696ffc6625c01714f3c3c1244e"
 
@@ -76,9 +77,8 @@ def make_stw_surface(path):
     native[:, :, 1] = target_span[:, None]
     if not np.allclose(native[:, 0], native[:, -1], atol=1e-14):
         raise ValueError("Surface ring is not closed")
-    original = native[..., [0, 2, 1]].transpose(2, 0, 1) / 5.0
-    centers = .25*(original[:, 1:, 1:]+original[:, :-1, 1:]
-                    +original[:, 1:, :-1]+original[:, :-1, :-1])
+    encoded = encode_stw_surface(native, root_chord_m=5., reference_half_area_m2=45.5)
+    original = encoded['original_geometry']
     chord = native[:, :, 0].max(1) - native[:, :, 0].min(1)
     area = float(np.sum(.5*(chord[1:]+chord[:-1])*np.diff(target_span)))
     if abs(area/45.5-1) > 1e-5:
@@ -105,9 +105,9 @@ def make_stw_surface(path):
         "reason": "Frozen model has no Re/temperature input; reference uses cruise altitude; root/tip coverage and sampling differ",
         "score_interpretation": "Uncalibrated transfer discrepancy against public RANS reference, not pure matched-physics model error",
         "mdo_score_eligible": False, "matched_speedup_eligible": False,
+        "input_contract": describe_contract(),
     }
-    return {"original_geometry": original, "geometry": centers.astype(np.float32),
-            "native_vertices_m": native, "ref_area": 45.5/25.}, audit
+    return dict(encoded, native_vertices_m=native), audit
 
 
 def polar_scores(predicted, reference):
